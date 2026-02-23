@@ -215,7 +215,7 @@ public sealed class TelegramClientService : IDisposable
         };
     }
 
-    private async Task<TExpected> SendExpectingAsync<TExpected>(TdApi.Function function, CancellationToken ct)
+    private async Task<TExpected> SendExpectingAsync<TExpected>(TdApi.Function<TExpected> function, CancellationToken ct)
         where TExpected : TdApi.Object
     {
         EnsureClient();
