@@ -219,27 +219,16 @@ public sealed class TelegramClientService : IDisposable
         where TExpected : TdApi.Object
     {
         EnsureClient();
+        ct.ThrowIfCancellationRequested();
 
-        var tcs = new TaskCompletionSource<TExpected>(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var reg = ct.Register(() => tcs.TrySetCanceled(ct));
+        var response = await _client!.ExecuteAsync(function);
 
-        _client!.Send(function, response =>
+        return response switch
         {
-            switch (response)
-            {
-                case TExpected expected:
-                    tcs.TrySetResult(expected);
-                    break;
-                case TdApi.Error err:
-                    tcs.TrySetException(new TdException(err.Message));
-                    break;
-                default:
-                    tcs.TrySetException(new InvalidOperationException($"Неожиданный ответ TDLib: {response.GetType().Name}"));
-                    break;
-            }
-        });
-
-        return await tcs.Task;
+            TExpected expected => expected,
+            TdApi.Error err => throw new TdException(err.Message),
+            _ => throw new InvalidOperationException($"Неожиданный ответ TDLib: {response.GetType().Name}"),
+        };
     }
 
     private static bool IsDateInRange(DateTime messageDateUtc, ScanOptions options)
