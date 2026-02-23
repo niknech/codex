@@ -1,0 +1,12 @@
+{
+  "api_id": 123456,
+  "api_hash": "0123456789abcdef0123456789abcdef",
+  "tdlib_library_path": "./tdlib/tdjson.dll",
+  "database_directory": "./tdlib_data",
+  "files_directory": "./tdlib_data/files",
+  "system_language_code": "ru",
+  "device_model": "Windows PC",
+  "system_version": "Windows 10",
+  "application_version": "1.0",
+  "use_test_dc": false
+}
