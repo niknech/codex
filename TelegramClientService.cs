@@ -9,35 +9,28 @@ using TdLib;
 
 namespace TelegramKeywordCleaner;
 
-public sealed class TelegramClientService : IAsyncDisposable
+public sealed class TelegramClientService : IDisposable
 {
     private TdClient? _client;
+    private AppConfig? _config;
     private readonly Channel<TdApi.AuthorizationState> _authStateChannel = Channel.CreateUnbounded<TdApi.AuthorizationState>();
     private readonly ConcurrentDictionary<long, TelegramChatView> _knownChats = new();
 
-    public async Task InitializeAsync(AppConfig config, Action<string> log, CancellationToken ct)
+    public Task InitializeAsync(AppConfig config, Action<string> log, CancellationToken ct)
     {
+        ct.ThrowIfCancellationRequested();
+
+        _config = config;
         _client = new TdClient();
         _client.UpdateReceived += OnUpdate;
 
-        await _client.ExecuteAsync(new TdApi.SetLogVerbosityLevel { NewVerbosityLevel = 1 }, ct);
-        await _client.SendAsync(new TdApi.SetTdlibParameters
+        _ = _client.ExecuteAsync(new TdApi.SetLogVerbosityLevel
         {
-            ApiId = config.ApiId,
-            ApiHash = config.ApiHash,
-            DeviceModel = Environment.MachineName,
-            SystemLanguageCode = "ru",
-            ApplicationVersion = "1.0",
-            DatabaseDirectory = "./tdlib_data",
-            FilesDirectory = "./tdlib_data/files",
-            UseMessageDatabase = true,
-            UseSecretChats = false,
-            UseChatInfoDatabase = true,
-            UseFileDatabase = false,
-            EnableStorageOptimizer = true,
-        }, ct);
+            NewVerbosityLevel = 1,
+        });
 
         log("TDLib инициализирован.");
+        return Task.CompletedTask;
     }
 
     public async Task AuthenticateAsync(
@@ -48,26 +41,48 @@ public sealed class TelegramClientService : IAsyncDisposable
         CancellationToken ct)
     {
         EnsureClient();
+
         while (!ct.IsCancellationRequested)
         {
             var state = await _authStateChannel.Reader.ReadAsync(ct);
             switch (state)
             {
+                case TdApi.AuthorizationState.AuthorizationStateWaitTdlibParameters:
+                    await SendExpectingAsync<TdApi.Ok>(BuildSetTdlibParameters(), ct);
+                    log("Переданы параметры TDLib.");
+                    break;
+
+                case TdApi.AuthorizationState.AuthorizationStateWaitEncryptionKey:
+                    await SendExpectingAsync<TdApi.Ok>(new TdApi.CheckDatabaseEncryptionKey(), ct);
+                    log("Проверен ключ шифрования БД TDLib.");
+                    break;
+
                 case TdApi.AuthorizationState.AuthorizationStateWaitPhoneNumber:
-                    await _client!.SendAsync(new TdApi.SetAuthenticationPhoneNumber { PhoneNumber = phoneProvider() }, ct);
+                    await SendExpectingAsync<TdApi.Ok>(new TdApi.SetAuthenticationPhoneNumber { PhoneNumber = phoneProvider() }, ct);
                     log("Ожидание кода подтверждения...");
                     break;
+
                 case TdApi.AuthorizationState.AuthorizationStateWaitCode:
-                    await _client!.SendAsync(new TdApi.CheckAuthenticationCode { Code = codeProvider() }, ct);
+                    await SendExpectingAsync<TdApi.Ok>(new TdApi.CheckAuthenticationCode { Code = codeProvider() }, ct);
                     log("Проверка кода...");
                     break;
+
                 case TdApi.AuthorizationState.AuthorizationStateWaitPassword:
-                    await _client!.SendAsync(new TdApi.CheckAuthenticationPassword { Password = passwordProvider() }, ct);
+                    await SendExpectingAsync<TdApi.Ok>(new TdApi.CheckAuthenticationPassword { Password = passwordProvider() }, ct);
                     log("Проверка 2FA пароля...");
                     break;
+
+                case TdApi.AuthorizationState.AuthorizationStateWaitRegistration:
+                    throw new InvalidOperationException("Для аккаунта требуется регистрация. Используйте уже зарегистрированный аккаунт Telegram.");
+
+                case TdApi.AuthorizationState.AuthorizationStateWaitOtherDeviceConfirmation:
+                    log("Подтвердите вход на другом устройстве в приложении Telegram.");
+                    break;
+
                 case TdApi.AuthorizationState.AuthorizationStateReady:
                     log("Состояние авторизации: Ready.");
                     return;
+
                 case TdApi.AuthorizationState.AuthorizationStateClosed:
                     throw new InvalidOperationException("TDLib клиент закрылся во время авторизации.");
             }
@@ -77,8 +92,12 @@ public sealed class TelegramClientService : IAsyncDisposable
     public async Task<List<TelegramChatView>> GetMainChatsAsync(int limit, CancellationToken ct)
     {
         EnsureClient();
-        var result = await _client!.SendAsync(new TdApi.LoadChats { ChatList = new TdApi.ChatList.ChatListMain(), Limit = limit }, ct);
-        _ = result;
+
+        _ = await SendExpectingAsync<TdApi.Ok>(new TdApi.LoadChats
+        {
+            ChatList = new TdApi.ChatList.ChatListMain(),
+            Limit = limit,
+        }, ct);
 
         return _knownChats.Values
             .OrderBy(c => c.DisplayName)
@@ -94,7 +113,7 @@ public sealed class TelegramClientService : IAsyncDisposable
             return chat;
         }
 
-        var tdChat = await _client!.SendAsync(new TdApi.GetChat { ChatId = chatId }, ct);
+        var tdChat = await SendExpectingAsync<TdApi.Chat>(new TdApi.GetChat { ChatId = chatId }, ct);
         chat = TelegramChatView.FromTd(tdChat);
         _knownChats[chat.Id] = chat;
         return chat;
@@ -103,12 +122,8 @@ public sealed class TelegramClientService : IAsyncDisposable
     public async Task<long> ResolveChatByUsernameAsync(string username, CancellationToken ct)
     {
         EnsureClient();
-        var found = await _client!.SendAsync(new TdApi.SearchPublicChat { Username = username }, ct);
-        if (found is null)
-        {
-            throw new InvalidOperationException($"Чат не найден по username: {username}");
-        }
 
+        var found = await SendExpectingAsync<TdApi.Chat>(new TdApi.SearchPublicChat { Username = username }, ct);
         var view = TelegramChatView.FromTd(found);
         _knownChats[view.Id] = view;
         return view.Id;
@@ -124,7 +139,7 @@ public sealed class TelegramClientService : IAsyncDisposable
             TdApi.Messages page;
             try
             {
-                page = await _client!.SendAsync(new TdApi.GetChatHistory
+                page = await SendExpectingAsync<TdApi.Messages>(new TdApi.GetChatHistory
                 {
                     ChatId = chatId,
                     FromMessageId = fromMessageId,
@@ -162,12 +177,69 @@ public sealed class TelegramClientService : IAsyncDisposable
     public async Task DeleteMessagesAsync(long chatId, long messageId, bool revoke, CancellationToken ct)
     {
         EnsureClient();
-        await _client!.SendAsync(new TdApi.DeleteMessages
+
+        _ = await SendExpectingAsync<TdApi.Ok>(new TdApi.DeleteMessages
         {
             ChatId = chatId,
             MessageIds = [messageId],
             Revoke = revoke,
         }, ct);
+    }
+
+    private TdApi.SetTdlibParameters BuildSetTdlibParameters()
+    {
+        if (_config is null)
+        {
+            throw new InvalidOperationException("Конфигурация TDLib не загружена.");
+        }
+
+        return new TdApi.SetTdlibParameters
+        {
+            Parameters = new TdApi.TdlibParameters
+            {
+                UseTestDc = false,
+                DatabaseDirectory = "./tdlib_data",
+                FilesDirectory = "./tdlib_data/files",
+                UseFileDatabase = true,
+                UseChatInfoDatabase = true,
+                UseMessageDatabase = true,
+                UseSecretChats = false,
+                ApiId = _config.ApiId,
+                ApiHash = _config.ApiHash,
+                SystemLanguageCode = "ru",
+                DeviceModel = Environment.MachineName,
+                SystemVersion = Environment.OSVersion.VersionString,
+                ApplicationVersion = "1.0",
+                EnableStorageOptimizer = true,
+            },
+        };
+    }
+
+    private async Task<TExpected> SendExpectingAsync<TExpected>(TdApi.Function function, CancellationToken ct)
+        where TExpected : TdApi.Object
+    {
+        EnsureClient();
+
+        var tcs = new TaskCompletionSource<TExpected>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var reg = ct.Register(() => tcs.TrySetCanceled(ct));
+
+        _client!.Send(function, response =>
+        {
+            switch (response)
+            {
+                case TExpected expected:
+                    tcs.TrySetResult(expected);
+                    break;
+                case TdApi.Error err:
+                    tcs.TrySetException(new TdException(err.Message));
+                    break;
+                default:
+                    tcs.TrySetException(new InvalidOperationException($"Неожиданный ответ TDLib: {response.GetType().Name}"));
+                    break;
+            }
+        });
+
+        return await tcs.Task;
     }
 
     private static bool IsDateInRange(DateTime messageDateUtc, ScanOptions options)
@@ -192,9 +264,17 @@ public sealed class TelegramClientService : IAsyncDisposable
             case TdApi.Update.UpdateAuthorizationState state:
                 _authStateChannel.Writer.TryWrite(state.AuthorizationState);
                 break;
+
             case TdApi.Update.UpdateNewChat newChat:
                 var chat = TelegramChatView.FromTd(newChat.Chat);
                 _knownChats[chat.Id] = chat;
+                break;
+
+            case TdApi.Update.UpdateChatTitle titleUpdate:
+                if (_knownChats.TryGetValue(titleUpdate.ChatId, out var existing))
+                {
+                    _knownChats[titleUpdate.ChatId] = existing with { Title = titleUpdate.Title };
+                }
                 break;
         }
     }
@@ -207,12 +287,13 @@ public sealed class TelegramClientService : IAsyncDisposable
         }
     }
 
-    public async ValueTask DisposeAsync()
+    public void Dispose()
     {
         if (_client is not null)
         {
             _client.UpdateReceived -= OnUpdate;
-            await _client.DisposeAsync();
+            _client.Dispose();
+            _client = null;
         }
     }
 }
