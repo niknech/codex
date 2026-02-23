@@ -226,7 +226,7 @@ public sealed class TelegramClientService : IDisposable
         return response switch
         {
             TExpected expected => expected,
-            TdApi.Error err => throw new TdException(err.Message),
+            TdApi.Error err => throw new TdException(err),
             _ => throw new InvalidOperationException($"Неожиданный ответ TDLib: {response.GetType().Name}"),
         };
     }
