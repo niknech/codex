@@ -1,46 +1,46 @@
 ; ------------------------------------------------------------
 ; hex16_to_dec.asm
-; Intel 8080 / CP/M
-; Перевод 16-битного числа из шестнадцатеричной формы в
-; десятичную строку (5 символов) и вывод через BDOS function 9.
+; Целевая CPU: Z80
+; Мнемоника:   Intel 8080 (без Z80-специфичных инструкций)
+;
+; Назначение:
+;   Перевод 16-битного числа из HEX (двоичное значение WORD)
+;   в десятичную ASCII-строку и вывод через BDOS function 9.
 ; ------------------------------------------------------------
 
-        ORG     100h
+        ORG     100H
 
 START:
         ; HL <- исходное 16-битное число
         LHLD    HEX_VALUE
 
-        ; Инициализация указателя на выходной буфер
+        ; Инициализация выходного буфера
         LXI     H, DEC_BUFFER
         SHLD    OUT_PTR
 
-        ; 10000
-        LXI     D, 2710h
+        ; Пока не выведена первая ненулевая цифра: STARTED = 0
+        XRA     A
+        STA     STARTED
+
+        ; Разряды: 10000, 1000, 100, 10
+        LXI     D, 2710H         ; 10000
+        CALL    EMIT_OPTIONAL_DIGIT
+
+        LXI     D, 03E8H         ; 1000
+        CALL    EMIT_OPTIONAL_DIGIT
+
+        LXI     D, 0064H         ; 100
+        CALL    EMIT_OPTIONAL_DIGIT
+
+        LXI     D, 000AH         ; 10
+        CALL    EMIT_OPTIONAL_DIGIT
+
+        ; Последний разряд (1) печатаем всегда
+        LXI     D, 0001H
         CALL    MAKE_DIGIT
         CALL    STORE_CHAR
 
-        ; 1000
-        LXI     D, 03E8h
-        CALL    MAKE_DIGIT
-        CALL    STORE_CHAR
-
-        ; 100
-        LXI     D, 0064h
-        CALL    MAKE_DIGIT
-        CALL    STORE_CHAR
-
-        ; 10
-        LXI     D, 000Ah
-        CALL    MAKE_DIGIT
-        CALL    STORE_CHAR
-
-        ; 1
-        LXI     D, 0001h
-        CALL    MAKE_DIGIT
-        CALL    STORE_CHAR
-
-        ; Терминатор для BDOS function 9
+        ; Завершитель строки для BDOS function 9
         MVI     A, '$'
         CALL    STORE_CHAR
 
@@ -52,10 +52,49 @@ START:
         RET
 
 ; ------------------------------------------------------------
+; EMIT_OPTIONAL_DIGIT
+; Вход:
+;   HL = текущее значение
+;   DE = делитель (10000/1000/100/10)
+; Логика:
+;   - пока STARTED=0, нулевые цифры пропускаются
+;   - после первой ненулевой цифры печатаются все разряды
+; Выход:
+;   HL = остаток
+; ------------------------------------------------------------
+EMIT_OPTIONAL_DIGIT:
+        CALL    MAKE_DIGIT        ; A = '0'..'9', HL = remainder
+
+        PUSH    H
+        PUSH    D
+
+        MOV     B, A              ; сохранить цифру
+        LDA     STARTED
+        ORA     A
+        JNZ     EOD_PRINT
+
+        MOV     A, B
+        CPI     '0'
+        JZ      EOD_SKIP
+
+        ; первая ненулевая цифра
+        MVI     A, 1
+        STA     STARTED
+
+EOD_PRINT:
+        MOV     A, B
+        CALL    STORE_CHAR
+
+EOD_SKIP:
+        POP     D
+        POP     H
+        RET
+
+; ------------------------------------------------------------
 ; MAKE_DIGIT
 ; Вход:
 ;   HL = текущее значение
-;   DE = десятичный делитель (10000,1000,100,10,1)
+;   DE = десятичный делитель
 ; Выход:
 ;   HL = остаток после вычитаний
 ;   A  = ASCII-цифра ('0'..'9')
@@ -115,12 +154,15 @@ STORE_CHAR:
 ; Данные
 ; ------------------------------------------------------------
 HEX_VALUE:
-        DW      0ABCDh          ; Пример: AB CDh = 43981d
+        DW      0ABCDH            ; пример: 0xABCD = 43981
 
 OUT_PTR:
-        DW      0000h
+        DW      0000H
+
+STARTED:
+        DB      00H
 
 DEC_BUFFER:
-        DB      '00000$'
+        DB      '00000$'          ; буфер максимум 5 цифр + '$'
 
         END     START
