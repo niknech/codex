@@ -50,16 +50,10 @@ const maeChart = new Chart(document.getElementById('maeChart'), {
 
 function updateSignal(meanMapePercent) {
   const card = document.getElementById('metricsCard');
-  const badge = document.getElementById('meanMapeBadge');
-
   if (meanMapePercent > 3) {
     card.classList.add('alert');
-    badge.className = 'badge danger';
-    badge.textContent = 'mean_mape > 3%';
   } else {
     card.classList.remove('alert');
-    badge.className = 'badge ok';
-    badge.textContent = 'mean_mape ≤ 3%';
   }
 }
 
