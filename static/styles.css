@@ -1,0 +1,82 @@
+:root {
+  --bg: #0f1226;
+  --card: rgba(255, 255, 255, 0.09);
+  --text: #edf2ff;
+  --muted: #b8c1ff;
+  --border: rgba(255, 255, 255, 0.18);
+}
+
+* {
+  box-sizing: border-box;
+  font-family: 'Inter', sans-serif;
+}
+
+body {
+  margin: 0;
+  background: radial-gradient(circle at 20% 10%, #2e1d70 0%, var(--bg) 55%);
+  color: var(--text);
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  gap: 18px;
+  padding: 20px;
+  min-height: 100vh;
+}
+
+.charts-column h1 {
+  margin: 0;
+  font-weight: 800;
+}
+
+.charts-column p {
+  margin: 8px 0 16px;
+  color: var(--muted);
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  backdrop-filter: blur(8px);
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.25);
+  padding: 12px;
+  margin-bottom: 14px;
+}
+
+canvas {
+  width: 100% !important;
+  height: 240px !important;
+}
+
+.table-column h2 {
+  margin-top: 0;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: center;
+}
+
+th,
+td {
+  border: 1px solid var(--border);
+  padding: 12px 8px;
+}
+
+th {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+td {
+  font-size: 1.1rem;
+  font-weight: 700;
+}
+
+@media (max-width: 1100px) {
+  .layout {
+    grid-template-columns: 1fr;
+  }
+}

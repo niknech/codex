@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Q_IL Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
+  </head>
+  <body>
+    <div class="page-bg"></div>
+    <main class="layout">
+      <section class="charts-column">
+        <h1>📊 Live Dashboard: Q_IL</h1>
+        <p>Новые строки из Excel появляются каждые 1.5 секунды.</p>
+
+        <div class="card"><canvas id="qilChart"></canvas></div>
+        <div class="card"><canvas id="mapeChart"></canvas></div>
+        <div class="card"><canvas id="maeChart"></canvas></div>
+      </section>
+
+      <aside class="table-column card">
+        <h2>Текущие метрики</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>mae</th>
+              <th>mean_mae</th>
+              <th>mean_mape</th>
+              <th>mean_Q_IL_pred</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td id="maeCell">—</td>
+              <td id="meanMaeCell">—</td>
+              <td id="meanMapeCell">—</td>
+              <td id="meanQilPredCell">—</td>
+            </tr>
+          </tbody>
+        </table>
+      </aside>
+    </main>
+
+    <script src="{{ url_for('static', filename='app.js') }}"></script>
+  </body>
+</html>
