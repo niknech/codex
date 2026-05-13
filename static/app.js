@@ -4,7 +4,7 @@ let shownRows = [];
 let currentIndex = 0;
 
 const dashboardFont = "'Franklin Gothic Medium', 'Arial Narrow', Arial, sans-serif";
-const flowUnit = 'м3/ч';
+const flowUnit = 'м³/ч';
 Chart.defaults.font.family = dashboardFont;
 
 const commonOptions = {
@@ -17,6 +17,11 @@ const commonOptions = {
         font: { family: dashboardFont, size: 13, weight: '700' },
         usePointStyle: true,
         pointStyle: 'circle',
+      },
+    },
+    tooltip: {
+      callbacks: {
+        label: (context) => `${context.dataset.label}: ${Number(context.parsed.y).toFixed(2)} ${flowUnit}`,
       },
     },
   },
@@ -32,7 +37,7 @@ const commonOptions = {
         color: '#001f3f',
         font: { family: dashboardFont, size: 14, weight: '700' },
       },
-      ticks: { color: '#2f4f73', font: { family: dashboardFont } },
+      ticks: { color: '#2f4f73', font: { family: dashboardFont }, callback: (value) => Number(value).toFixed(2) },
       grid: { color: 'rgba(0, 68, 124, 0.12)' },
     },
   },
@@ -91,9 +96,9 @@ function updateDashboard() {
   const last = shownRows[shownRows.length - 1];
   const meanMapePercent = Number(last.mean_mape) * 100;
 
-  document.getElementById('meanMaeCell').textContent = `${Number(last.mean_mae).toFixed(4)} ${flowUnit}`;
+  document.getElementById('meanMaeCell').textContent = `${Number(last.mean_mae).toFixed(2)} ${flowUnit}`;
   document.getElementById('meanMapeCell').textContent = `${meanMapePercent.toFixed(2)}%`;
-  document.getElementById('meanQilPredCell').textContent = `${Number(last.mean_Q_IL_pred).toFixed(4)} ${flowUnit}`;
+  document.getElementById('meanQilPredCell').textContent = `${Number(last.mean_Q_IL_pred).toFixed(2)} ${flowUnit}`;
 
   updateSignal(meanMapePercent);
 }
