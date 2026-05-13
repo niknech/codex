@@ -3,48 +3,57 @@ let allRows = [];
 let shownRows = [];
 let currentIndex = 0;
 
-const percentTick = (value) => `${Number(value).toFixed(2)}%`;
-
 const commonOptions = {
   responsive: true,
   maintainAspectRatio: false,
-  plugins: { legend: { labels: { color: '#edf2ff' } } },
+  plugins: {
+    legend: {
+      labels: {
+        color: '#001f3f',
+        font: { size: 13, weight: '700' },
+        usePointStyle: true,
+        pointStyle: 'circle',
+      },
+    },
+  },
   scales: {
-    x: { ticks: { color: '#cfd6ff', maxRotation: 0, autoSkip: true }, grid: { color: 'rgba(255,255,255,0.08)' } },
-    y: { ticks: { color: '#cfd6ff' }, grid: { color: 'rgba(255,255,255,0.08)' } },
+    x: {
+      ticks: { color: '#2f4f73', maxRotation: 0, autoSkip: true },
+      grid: { color: 'rgba(0, 68, 124, 0.08)' },
+    },
+    y: {
+      ticks: { color: '#2f4f73' },
+      grid: { color: 'rgba(0, 68, 124, 0.12)' },
+    },
   },
 };
 
 const qilChart = new Chart(document.getElementById('qilChart'), {
   type: 'line',
   data: { labels: [], datasets: [
-    { label: 'Расход измеренный', data: [], borderColor: '#00e5ff', backgroundColor: 'rgba(0,229,255,0.2)', tension: 0.3 },
-    { label: 'Расход предсказанный', data: [], borderColor: '#ff70d0', backgroundColor: 'rgba(255,112,208,0.2)', tension: 0.3 },
-  ] },
-  options: commonOptions,
-});
-
-const mapeChart = new Chart(document.getElementById('mapeChart'), {
-  type: 'line',
-  data: { labels: [], datasets: [{ label: 'Относительная погрешность (%)', data: [], borderColor: '#ffd166', backgroundColor: 'rgba(255,209,102,0.2)', tension: 0.3 }] },
-  options: {
-    ...commonOptions,
-    scales: {
-      ...commonOptions.scales,
-      y: {
-        ...commonOptions.scales.y,
-        ticks: {
-          ...commonOptions.scales.y.ticks,
-          callback: percentTick,
-        },
-      },
+    {
+      label: 'Расход измеренный',
+      data: [],
+      borderColor: '#005596',
+      backgroundColor: 'rgba(0, 85, 150, 0.14)',
+      pointBackgroundColor: '#005596',
+      pointBorderColor: '#ffffff',
+      pointRadius: 3,
+      borderWidth: 3,
+      tension: 0.3,
     },
-  },
-});
-
-const maeChart = new Chart(document.getElementById('maeChart'), {
-  type: 'line',
-  data: { labels: [], datasets: [{ label: 'Абсолютная погрешность', data: [], borderColor: '#7bf1a8', backgroundColor: 'rgba(123,241,168,0.2)', tension: 0.3 }] },
+    {
+      label: 'Расход предсказанный',
+      data: [],
+      borderColor: '#ee3124',
+      backgroundColor: 'rgba(238, 49, 36, 0.12)',
+      pointBackgroundColor: '#ee3124',
+      pointBorderColor: '#ffffff',
+      pointRadius: 3,
+      borderWidth: 3,
+      tension: 0.3,
+    },
+  ] },
   options: commonOptions,
 });
 
@@ -68,14 +77,6 @@ function updateDashboard() {
   qilChart.data.datasets[0].data = shownRows.map((r) => r.Q_IL);
   qilChart.data.datasets[1].data = shownRows.map((r) => r.Q_IL_pred);
   qilChart.update();
-
-  mapeChart.data.labels = labels;
-  mapeChart.data.datasets[0].data = shownRows.map((r) => Number(r.mape) * 100);
-  mapeChart.update();
-
-  maeChart.data.labels = labels;
-  maeChart.data.datasets[0].data = shownRows.map((r) => r.mae);
-  maeChart.update();
 
   const last = shownRows[shownRows.length - 1];
   const meanMapePercent = Number(last.mean_mape) * 100;
