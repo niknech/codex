@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Дашборд СИКН 928</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
+  </head>
+  <body>
+    <main class="layout">
+      <section class="charts-column">
+        <h1>📊 Дашборд СИКН 928</h1>
+        <p>ИЛ №7</p>
+
+        <div class="card chart-card"><canvas id="qilChart"></canvas></div>
+
+        <section class="table-column card" id="metricsCard">
+          <div class="table-header-row">
+            <h2>Средние значения</h2>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th class="signal-col">Абсолютная<br />погрешность</th>
+                <th class="signal-col">Относительная<br />погрешность</th>
+                <th>Расход<br />по ИЛ</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td id="meanMaeCell" class="signal-col">—</td>
+                <td id="meanMapeCell" class="signal-col">—</td>
+                <td id="meanQilPredCell">—</td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+      </section>
+    </main>
+
+    <script src="{{ url_for('static', filename='app.js') }}"></script>
+  </body>
+</html>
