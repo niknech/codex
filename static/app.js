@@ -3,6 +3,9 @@ let allRows = [];
 let shownRows = [];
 let currentIndex = 0;
 
+const dashboardFont = "'Franklin Gothic Medium', 'Arial Narrow', Arial, sans-serif";
+Chart.defaults.font.family = dashboardFont;
+
 const commonOptions = {
   responsive: true,
   maintainAspectRatio: false,
@@ -10,7 +13,7 @@ const commonOptions = {
     legend: {
       labels: {
         color: '#001f3f',
-        font: { size: 13, weight: '700' },
+        font: { family: dashboardFont, size: 13, weight: '700' },
         usePointStyle: true,
         pointStyle: 'circle',
       },
@@ -18,11 +21,11 @@ const commonOptions = {
   },
   scales: {
     x: {
-      ticks: { color: '#2f4f73', maxRotation: 0, autoSkip: true },
+      ticks: { color: '#2f4f73', font: { family: dashboardFont }, maxRotation: 0, autoSkip: true },
       grid: { color: 'rgba(0, 68, 124, 0.08)' },
     },
     y: {
-      ticks: { color: '#2f4f73' },
+      ticks: { color: '#2f4f73', font: { family: dashboardFont } },
       grid: { color: 'rgba(0, 68, 124, 0.12)' },
     },
   },
