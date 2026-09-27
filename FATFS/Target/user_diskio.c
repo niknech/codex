@@ -81,7 +81,7 @@ DSTATUS USER_initialize (
 )
 {
   /* USER CODE BEGIN INIT */
-    Stat = STA_NOINIT;
+    Stat = 0;
     return Stat;
   /* USER CODE END INIT */
 }
@@ -96,7 +96,7 @@ DSTATUS USER_status (
 )
 {
   /* USER CODE BEGIN STATUS */
-    Stat = STA_NOINIT;
+    Stat = 0;
     return Stat;
   /* USER CODE END STATUS */
 }
@@ -160,8 +160,29 @@ DRESULT USER_ioctl (
 )
 {
   /* USER CODE BEGIN IOCTL */
-    DRESULT res = RES_ERROR;
-    return res;
+    if (pdrv != 0)
+    	return RES_PARERR;
+
+    switch (cmd)
+    {
+        case CTRL_SYNC:
+            return RES_OK;
+
+        case GET_SECTOR_COUNT:
+            *(DWORD *)buff = BLOCKS;
+            return RES_OK;
+
+        case GET_SECTOR_SIZE:
+            *(WORD *)buff = SSIZE;
+            return RES_OK;
+
+        case GET_BLOCK_SIZE:
+            *(DWORD *)buff = 1;
+            return RES_OK;
+
+        default:
+            return RES_PARERR;
+    }
   /* USER CODE END IOCTL */
 }
 #endif /* _USE_IOCTL == 1 */

@@ -9,13 +9,13 @@
 #define INC_RAM_DRIVER_H_
 
 #define SSIZE 512
-#define BLOCKS 80
+#define BLOCKS 128
 
 #include "inttypes.h"
 #include "string.h"
 
 extern uint8_t ramdrive[BLOCKS][SSIZE];
 
-void ramdrive_init(void);
+uint8_t ramdrive_init(void);
 
 #endif /* INC_RAM_DRIVER_H_ */

@@ -92,17 +92,27 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
-  MX_USB_DEVICE_Init();
+
   MX_FATFS_Init();
   /* USER CODE BEGIN 2 */
-  ramdrive_init();
+  uint8_t RD_R = ramdrive_init();
+  MX_USB_DEVICE_Init();
+
+  fr = f_mount(&USERFatFS, USERPath, 1);
+
+  FIL myFile;
+  if (fr == FR_OK)
+  {
+	  f_open(&myFile, "test.txt", FA_WRITE);
+  }
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	  fr = f_mount(&USERFatFS, USERPath, 1);
+	  /*fr = f_mount(&USERFatFS, USERPath, 1);
 
 	  if (fr == FR_OK)
 	    {
@@ -118,7 +128,7 @@ int main(void)
 	        f_mount(NULL, USERPath, 1);
 	    }
 
-	  HAL_Delay(200);
+	  HAL_Delay(200);*/
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
