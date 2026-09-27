@@ -140,6 +140,7 @@ DRESULT USER_write (
 {
   /* USER CODE BEGIN WRITE */
   /* USER CODE HERE */
+	memcpy(ramdrive[sector], buff, count * SSIZE);
     return RES_OK;
   /* USER CODE END WRITE */
 }

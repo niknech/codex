@@ -103,7 +103,8 @@ int main(void)
   FIL myFile;
   if (fr == FR_OK)
   {
-	  f_open(&myFile, "test.txt", FA_WRITE);
+	  f_open(&myFile, "test.txt", FA_CREATE_ALWAYS | FA_WRITE);
+	  f_close(&myFile);
   }
 
   /* USER CODE END 2 */
@@ -112,23 +113,7 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	  /*fr = f_mount(&USERFatFS, USERPath, 1);
 
-	  if (fr == FR_OK)
-	    {
-	        if (f_stat("led_on", &fileInfo) == FR_OK)
-	        {
-	            LED_ON();
-	        }
-	        else if (f_stat("led_off", &fileInfo) == FR_OK)
-	        {
-	            LED_OFF();
-	        }
-
-	        f_mount(NULL, USERPath, 1);
-	    }
-
-	  HAL_Delay(200);*/
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
