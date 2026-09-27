@@ -735,41 +735,40 @@ static void MX_TIM2_Init(void)
   sConfigOC.OCMode = TIM_OCMODE_PWM1;
  8000756:	2360      	movs	r3, #96	@ 0x60
  8000758:	607b      	str	r3, [r7, #4]
-  sConfigOC.Pulse = 0;
- 800075a:	2300      	movs	r3, #0
- 800075c:	60bb      	str	r3, [r7, #8]
+  sConfigOC.Pulse = 36000;
+ 800075a:	f648 43a0 	movw	r3, #36000	@ 0x8ca0
+ 800075e:	60bb      	str	r3, [r7, #8]
   sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
- 800075e:	2300      	movs	r3, #0
- 8000760:	60fb      	str	r3, [r7, #12]
+ 8000760:	2300      	movs	r3, #0
+ 8000762:	60fb      	str	r3, [r7, #12]
   sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
- 8000762:	2300      	movs	r3, #0
- 8000764:	617b      	str	r3, [r7, #20]
+ 8000764:	2300      	movs	r3, #0
+ 8000766:	617b      	str	r3, [r7, #20]
   if (HAL_TIM_PWM_ConfigChannel(&htim2, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
- 8000766:	1d3b      	adds	r3, r7, #4
- 8000768:	2200      	movs	r2, #0
- 800076a:	4619      	mov	r1, r3
- 800076c:	4807      	ldr	r0, [pc, #28]	@ (800078c <MX_TIM2_Init+0xac>)
- 800076e:	f003 fa65 	bl	8003c3c <HAL_TIM_PWM_ConfigChannel>
- 8000772:	4603      	mov	r3, r0
- 8000774:	2b00      	cmp	r3, #0
- 8000776:	d001      	beq.n	800077c <MX_TIM2_Init+0x9c>
+ 8000768:	1d3b      	adds	r3, r7, #4
+ 800076a:	2200      	movs	r2, #0
+ 800076c:	4619      	mov	r1, r3
+ 800076e:	4807      	ldr	r0, [pc, #28]	@ (800078c <MX_TIM2_Init+0xac>)
+ 8000770:	f003 fa64 	bl	8003c3c <HAL_TIM_PWM_ConfigChannel>
+ 8000774:	4603      	mov	r3, r0
+ 8000776:	2b00      	cmp	r3, #0
+ 8000778:	d001      	beq.n	800077e <MX_TIM2_Init+0x9e>
   {
     Error_Handler();
- 8000778:	f000 f834 	bl	80007e4 <Error_Handler>
+ 800077a:	f000 f833 	bl	80007e4 <Error_Handler>
   }
   /* USER CODE BEGIN TIM2_Init 2 */
 
   /* USER CODE END TIM2_Init 2 */
   HAL_TIM_MspPostInit(&htim2);
- 800077c:	4803      	ldr	r0, [pc, #12]	@ (800078c <MX_TIM2_Init+0xac>)
- 800077e:	f000 f8ab 	bl	80008d8 <HAL_TIM_MspPostInit>
+ 800077e:	4803      	ldr	r0, [pc, #12]	@ (800078c <MX_TIM2_Init+0xac>)
+ 8000780:	f000 f8aa 	bl	80008d8 <HAL_TIM_MspPostInit>
 
 }
- 8000782:	bf00      	nop
- 8000784:	3728      	adds	r7, #40	@ 0x28
- 8000786:	46bd      	mov	sp, r7
- 8000788:	bd80      	pop	{r7, pc}
- 800078a:	bf00      	nop
+ 8000784:	bf00      	nop
+ 8000786:	3728      	adds	r7, #40	@ 0x28
+ 8000788:	46bd      	mov	sp, r7
+ 800078a:	bd80      	pop	{r7, pc}
  800078c:	2000013c 	.word	0x2000013c
  8000790:	00011940 	.word	0x00011940
 
