@@ -33,8 +33,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define LED_ON() HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, 1);
-#define LED_OFF() HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, 0);
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -56,7 +55,11 @@ FRESULT fr;
 
 uint8_t CountOfConv = 0;
 uint16_t val = 0;
+float volts = 0;
 uint8_t flagWrite = 0;
+char str[64];
+uint16_t lastTimeStamp = 65535;
+uint16_t timeStamp = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -110,21 +113,23 @@ int main(void)
   MX_TIM1_Init();
   /* USER CODE BEGIN 2 */
   uint8_t RD_R = ramdrive_init();
-
   if (!RD_R)
 	  Error_Handler();
 
   fr = f_mount(&USERFatFS, USERPath, 1);
+  if (fr != FR_OK)
+	  Error_Handler();
 
   FIL myFile;
   if (fr == FR_OK)
-	  f_open(&myFile, "test.txt", FA_CREATE_ALWAYS | FA_WRITE);
+	  f_open(&myFile, "result.csv", FA_CREATE_ALWAYS | FA_WRITE);
   else
 	  Error_Handler();
 
   HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
   HAL_TIM_OC_Start(&htim1, TIM_CHANNEL_1);
   HAL_ADC_Start_IT(&hadc1);
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -146,7 +151,10 @@ int main(void)
 		  }
 		  else
 		  {
-			  f_printf(&myFile, "%u %u\r\n", CountOfConv, val);
+			  volts = (float) val * 3.30f / 4096.00f;
+			  snprintf(str, sizeof(str), "%u; %.2f; %u; %u\n", CountOfConv, volts, timeStamp, lastTimeStamp-timeStamp);
+			  f_printf(&myFile, str);
+			  lastTimeStamp = timeStamp;
 			  flagWrite = 0;
 		  }
 	  }
@@ -301,8 +309,8 @@ static void MX_TIM1_Init(void)
   {
     Error_Handler();
   }
-  sConfigOC.OCMode = TIM_OCMODE_TIMING;
-  sConfigOC.Pulse = 500;
+  sConfigOC.OCMode = TIM_OCMODE_TOGGLE;
+  sConfigOC.Pulse = 999;
   sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
   sConfigOC.OCNPolarity = TIM_OCNPOLARITY_HIGH;
   sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
@@ -406,6 +414,7 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
 		val = HAL_ADC_GetValue(hadc);
 		CountOfConv++;
 		flagWrite = 1;
+		timeStamp = htim1.Instance->CNT;
 	}
 }
 /* USER CODE END 4 */
