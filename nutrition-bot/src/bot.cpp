@@ -11,12 +11,17 @@ Json buttons(const std::vector<std::pair<std::string, std::string>> &values) {
     return {{"inline_keyboard", rows}};
 }
 Json menu() {
-    return {{"keyboard",
-             {{"🍽 Добавить еду", "💧 Добавить воду"},
-              {"⚖️ Записать вес", "📊 Итоги дня"},
-              {"📅 Статистика", "📈 График веса"},
-              {"🎯 Мои нормы", "⚙️ Настройки"}}},
-            {"resize_keyboard", true}};
+    // Nested pairs of strings are interpreted as an object by nlohmann/json.
+    // Telegram requires an array of rows, each containing KeyboardButton objects.
+    Json keyboard = Json::array();
+    for (const auto &[left, right] : std::vector<std::pair<std::string, std::string>>{
+             {"🍽 Добавить еду", "💧 Добавить воду"},
+             {"⚖️ Записать вес", "📊 Итоги дня"},
+             {"📅 Статистика", "📈 График веса"},
+             {"🎯 Мои нормы", "⚙️ Настройки"}}) {
+        keyboard.push_back(Json::array({Json{{"text", left}}, Json{{"text", right}}}));
+    }
+    return {{"keyboard", keyboard}, {"resize_keyboard", true}};
 }
 void Bot::say(Id user, const std::string &text, const Json &markup) {
     auto rows = db_.rows("SELECT chat FROM users WHERE id=?", {user});

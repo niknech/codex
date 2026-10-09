@@ -1,6 +1,7 @@
 #include "bot.hpp"
 #include <algorithm>
 #include <filesystem>
+#include <iostream>
 namespace nb {
 void Bot::queue_ai(Id u, Id id, Id t) {
     if (!cfg_.ai_enabled)
@@ -149,7 +150,9 @@ void Bot::deliver_one(Telegram &telegram, Id t) {
         } else
             telegram.call(row["method"], p);
         db_.write("UPDATE outbox SET done=1,payload='{}' WHERE id=?", {row["id"]});
+        std::clog << "Delivered outbox " << row["id"] << '\n';
     } catch (const ApiError &e) {
+        std::cerr << "Delivery failed: outbox " << row["id"] << ", API status " << e.status << '\n';
         int attempts = row["attempts"].get<int>() + 1;
         bool terminal = (e.status >= 400 && e.status < 500 && e.status != 429) || attempts >= 8;
         Transaction tx(db_);

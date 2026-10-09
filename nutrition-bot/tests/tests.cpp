@@ -22,6 +22,14 @@ template <class F> void rejects(F f, const char *label) {
 int main() {
     try {
         init_timezones();
+        const auto keyboard = Json::parse(menu().dump()).at("keyboard");
+        check(keyboard.is_array() && keyboard.size() == 4, "Telegram keyboard is array of rows");
+        for (const auto &row : keyboard) {
+            check(row.is_array() && row.size() == 2, "Telegram keyboard row is array");
+            for (const auto &button : row)
+                check(button.is_object() && button.at("text").is_string(),
+                      "Telegram KeyboardButton has text");
+        }
         check(water_ml("0,5 л") == 500, "litres");
         check(water_ml("250 мл") == 250, "ml");
         for (auto s : {"-1", "nan", "inf", "1x", "0", "10001", "0.5 мл"})
