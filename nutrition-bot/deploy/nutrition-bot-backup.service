@@ -1,0 +1,10 @@
+[Unit]
+Description=Back up nutrition bot SQLite database
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/nutrition-bot-backup
+UMask=0077
+NoNewPrivileges=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/nutrition-bot /var/backups/nutrition-bot

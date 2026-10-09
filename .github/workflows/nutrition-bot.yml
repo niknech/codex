@@ -1,0 +1,29 @@
+name: Nutrition bot
+on:
+  push:
+    paths: ['nutrition-bot/**', '.github/workflows/nutrition-bot.yml']
+  pull_request:
+    paths: ['nutrition-bot/**', '.github/workflows/nutrition-bot.yml']
+permissions:
+  contents: read
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        sanitize: ['OFF', 'ON']
+    defaults:
+      run:
+        working-directory: nutrition-bot
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependencies
+        run: sudo apt-get update && sudo apt-get install -y ninja-build libcurl4-openssl-dev nlohmann-json3-dev libsqlite3-dev libhowardhinnant-date-dev gnuplot-nox fonts-dejavu-core
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DBOT_SANITIZE=${{ matrix.sanitize }}
+      - name: Build
+        run: cmake --build build -j2
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+      - name: CLI version
+        run: build/nutrition-bot --version
