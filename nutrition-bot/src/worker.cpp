@@ -29,7 +29,11 @@ void Bot::queue_ai(Id u, Id id, Id t) {
         throw InputError("Дневной лимит AI исчерпан. Ручной ввод доступен.");
     db_.write("INSERT INTO jobs(draft,version,user,day,due) VALUES(?,?,?,?,?)",
               {id, d[0]["version"], u, day, t});
-    say(u, "Описание в очереди оценки. Еда попадёт в дневник только после подтверждения.");
+    auto suffix = std::to_string(id) + ":" + std::to_string(d[0]["version"].get<Id>());
+    say(u, "Описание в очереди оценки. Еда попадёт в дневник только после подтверждения.",
+        buttons({{"Повторить после сбоя", "retry:" + suffix},
+                 {"Ввести вручную", "edit:" + suffix},
+                 {"Отмена", "cancel:" + suffix}}));
 }
 bool Bot::ai_one(Id t, const AiTransport &transport) {
     Json job, d;

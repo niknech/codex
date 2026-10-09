@@ -105,6 +105,9 @@ bool Bot::process_one(Id time) {
                     } catch (const InputError &e) {
                         db_.exec("ROLLBACK TO action; RELEASE action");
                         say(user, e.what());
+                    } catch (const Json::exception &) {
+                        db_.exec("ROLLBACK TO action; RELEASE action");
+                        say(user, "Диалог устарел. Выберите действие в меню заново.");
                     }
                 } else if (!cb)
                     say(user, "Доступ закрыт. Передайте владельцу ваш ID: " + std::to_string(user));
@@ -336,6 +339,7 @@ void Bot::message(Id u, Id, const std::string &text, Id t) {
             queue_ai(u, id, t);
     } else if (cmd == "/goals") {
         auto w = words(arg);
+        bool explicit_date = w.size() == 6;
         auto day = shift_day(today, 1);
         if (w.size() == 6) {
             day = parse_day(w.front());
@@ -347,7 +351,7 @@ void Bot::message(Id u, Id, const std::string &text, Id t) {
         if (day < today || (!old.is_null() && day == today))
             throw InputError(
                 "Изменённые нормы вводятся с завтра или будущей даты; история сохраняется.");
-        if (old.is_null() && day == shift_day(today, 1))
+        if (old.is_null() && !explicit_date)
             day = today;
         auto water = number(w[4], 1, 10000);
         if (std::floor(water) != water)
@@ -511,11 +515,14 @@ void Bot::period(Id u, const std::string &a, const std::string &b, int page, boo
     for (int i = first; i < std::min(first + 7, static_cast<int>(dates.size())); ++i)
         out += summary(db_, u, dates[i]) + "\n\n";
     auto total = db_.rows(
-        "SELECT COALESCE(SUM(kcal),0) AS kcal,COALESCE(SUM(CASE WHEN kind='water' THEN amount ELSE "
+        "SELECT COALESCE(SUM(kcal),0) AS kcal,COALESCE(SUM(protein),0) AS "
+        "protein,COALESCE(SUM(fat),0) AS fat,COALESCE(SUM(carbs),0) AS carbs,COALESCE(SUM(CASE "
+        "WHEN kind='water' THEN amount ELSE "
         "0 END),0) AS water FROM entries WHERE user=? AND deleted=0 AND day BETWEEN ? AND ?",
         {u, a, b})[0];
-    out += "Всего за период записано: " + total["kcal"].dump() + " ккал, " + total["water"].dump() +
-           " мл. Пустые дни — отсутствие записей.";
+    out += "Всего за период записано: " + total["kcal"].dump() + " ккал; Б/Ж/У " +
+           total["protein"].dump() + "/" + total["fat"].dump() + "/" + total["carbs"].dump() +
+           " г, " + total["water"].dump() + " мл. Пустые дни — отсутствие записей.";
     std::vector<std::pair<std::string, std::string>> nav;
     if (page)
         nav.emplace_back("Назад", "page:" + a + " " + b + " " + std::to_string(page - 1));

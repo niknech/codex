@@ -1,4 +1,5 @@
 #include "bot.hpp"
+#include <algorithm>
 #include <atomic>
 #include <csignal>
 #include <filesystem>
@@ -92,8 +93,13 @@ int main(int argc, char **argv) {
         };
         std::jthread delivery([&] { worker(false); });
         std::jthread ai;
-        if (cfg.ai_enabled)
-            ai = std::jthread([&] { worker(true); });
+        try {
+            if (cfg.ai_enabled)
+                ai = std::jthread([&] { worker(true); });
+        } catch (...) {
+            stopping = true;
+            throw;
+        }
         Bot bot(db, cfg);
         Id last_reminders = 0;
         int failures = 0;

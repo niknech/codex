@@ -131,6 +131,8 @@ int main() {
             bot.reminders(t);
             check(db.rows("SELECT * FROM notices WHERE user=11").size() == 2,
                   "once per date and rule at kcal threshold");
+            send(22, "/goals " + shift_day(day, 1) + " 2000 100 70 240 500");
+            check(goal(db, 22, day).is_null(), "explicit first future goal respected");
             send(22, "/goals 2000 100 70 240 500");
             db.write("UPDATE users SET reminders=1,water_hour1=?,water_hour2=? WHERE id=22",
                      {hour, (hour + 2) % 24});
