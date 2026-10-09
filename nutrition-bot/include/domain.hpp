@@ -3,6 +3,11 @@
 #include <stdexcept>
 #include <vector>
 namespace nb {
+std::string quantity(double value);
+std::string display_day(const std::string &day);
+std::string meal_label(const std::string &category);
+Json calendar_buttons(const std::string &month, const std::string &today,
+                      const std::string &prefix);
 struct InputError : std::runtime_error {
     using std::runtime_error::runtime_error;
 };

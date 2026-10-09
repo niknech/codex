@@ -174,22 +174,60 @@ Json goal(Database &db, Id u, const std::string &d) {
         db.rows("SELECT * FROM goals WHERE user=? AND day<=? ORDER BY day DESC LIMIT 1", {u, d});
     return r.empty() ? Json() : r[0];
 }
+std::string quantity(double value) {
+    std::ostringstream out;
+    out << std::fixed << std::setprecision(1) << value;
+    auto text = out.str();
+    if (text.size() > 2 && text.substr(text.size() - 2) == ".0")
+        text.resize(text.size() - 2);
+    std::replace(text.begin(), text.end(), '.', ',');
+    return text;
+}
+std::string display_day(const std::string &day) {
+    return day.substr(8, 2) + "." + day.substr(5, 2) + "." + day.substr(0, 4);
+}
+std::string meal_label(const std::string &category) {
+    if (category == "breakfast")
+        return "🌅 Завтрак";
+    if (category == "lunch")
+        return "☀️ Обед";
+    if (category == "dinner")
+        return "🌙 Ужин";
+    return "🍽 Без рубрики";
+}
 std::string summary(Database &db, Id u, const std::string &d) {
     auto t = totals(db, u, d), g = goal(db, u, d);
-    std::ostringstream out;
-    out << std::fixed << std::setprecision(1) << d << ": ";
+    std::string out = "📅 " + display_day(d) + "\n";
     if (t["count"] == 0)
-        out << "нет записей";
-    else
-        out << t["kcal"].get<double>() << " ккал; Б/Ж/У " << t["protein"].get<double>() << "/"
-            << t["fat"].get<double>() << "/" << t["carbs"].get<double>() << " г; вода "
-            << t["water"] << " мл";
-    if (!t["weight"].is_null())
-        out << "; вес " << t["weight"].get<double>() / 1000 << " кг";
+        return out + "\n📝 Пока нет записей за этот день.";
+    auto nutrient = [&](const std::string &icon, const std::string &title, const std::string &key,
+                        const std::string &unit) {
+        out += "\n" + icon + " " + title + ": " + quantity(t[key]);
+        if (!g.is_null())
+            out += " / " + quantity(g[key]);
+        out += " " + unit;
+    };
     if (!g.is_null())
-        out << "\nНормы: " << g["kcal"] << " ккал; Б/Ж/У " << g["protein"] << "/" << g["fat"] << "/"
-            << g["carbs"] << " г; " << g["water"] << " мл";
-    return out.str();
+        out += "Записано / личная норма\n";
+    nutrient("🔥", "Калории", "kcal", "ккал");
+    nutrient("🥚", "Белки", "protein", "г");
+    nutrient("🥑", "Жиры", "fat", "г");
+    nutrient("🍞", "Углеводы", "carbs", "г");
+    nutrient("💧", "Вода", "water", "мл");
+    out +=
+        "\n⚖️ Вес: " + (t["weight"].is_null() ? std::string("нет измерения")
+                                             : quantity(t["weight"].get<double>() / 1000) + " кг");
+    out += "\n\n🍽 Приёмы пищи";
+    for (auto category : {"breakfast", "lunch", "dinner", "unspecified"}) {
+        auto r = db.rows("SELECT COUNT(*) AS n,COALESCE(SUM(kcal),0) AS k FROM entries WHERE "
+                         "user=? AND day=? AND kind='meal' AND category=? AND deleted=0",
+                         {u, d, category})[0];
+        if (std::string(category) == "unspecified" && r["n"] == 0)
+            continue;
+        out += "\n" + meal_label(category) + ": " +
+               (r["n"] == 0 ? std::string("нет записей") : quantity(r["k"]) + " ккал");
+    }
+    return out;
 }
 std::string estimate_text(const Json &d) {
     if (d["status"] == "needs_clarification")
@@ -204,8 +242,9 @@ std::string estimate_text(const Json &d) {
         c += i["carbs_g"].get<double>();
     }
     std::ostringstream out;
-    out << std::fixed << std::setprecision(1) << "Еда — оценка до подтверждения\n"
-        << k << " ккал; Б/Ж/У " << p << "/" << f << "/" << c << " г\n";
+    out << std::fixed << std::setprecision(1) << "📝 Проверь перед сохранением\n\n"
+        << "🔥 Калории: " << quantity(k) << " ккал\n🥚 Белки: " << quantity(p)
+        << " г\n🥑 Жиры: " << quantity(f) << " г\n🍞 Углеводы: " << quantity(c) << " г\n\n";
     for (auto &i : d["items"]) {
         auto line = i["name"].get<std::string>() + "\n";
         if (out.str().size() + line.size() < 2800)

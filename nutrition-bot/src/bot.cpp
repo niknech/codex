@@ -14,11 +14,11 @@ Json menu() {
     // Nested pairs of strings are interpreted as an object by nlohmann/json.
     // Telegram requires an array of rows, each containing KeyboardButton objects.
     Json keyboard = Json::array();
-    for (const auto &[left, right] : std::vector<std::pair<std::string, std::string>>{
-             {"🍽 Добавить еду", "💧 Добавить воду"},
-             {"⚖️ Записать вес", "📊 Итоги дня"},
-             {"📅 Статистика", "📈 График веса"},
-             {"🎯 Мои нормы", "⚙️ Настройки"}}) {
+    for (const auto &[left, right] :
+         std::vector<std::pair<std::string, std::string>>{{"🍽 Добавить еду", "💧 Добавить воду"},
+                                                          {"⚖️ Записать вес", "📊 Итоги дня"},
+                                                          {"📅 Статистика", "📈 График веса"},
+                                                          {"🎯 Мои нормы", "⚙️ Настройки"}}) {
         keyboard.push_back(Json::array({Json{{"text", left}}, Json{{"text", right}}}));
     }
     return {{"keyboard", keyboard}, {"resize_keyboard", true}};
@@ -26,6 +26,18 @@ Json menu() {
 void Bot::say(Id user, const std::string &text, const Json &markup) {
     auto rows = db_.rows("SELECT chat FROM users WHERE id=?", {user});
     Json payload = {{"chat_id", rows.empty() ? user : rows[0]["chat"].get<Id>()}, {"text", text}};
+    // Telegram entity offsets count UTF-16 code units, including two for emoji.
+    // Entities format our heading without interpreting user text as HTML/Markdown.
+    auto newline = text.find('\n');
+    if (newline != std::string::npos) {
+        int length = 0;
+        for (unsigned char c : text.substr(0, newline))
+            if ((c & 0xc0) != 0x80)
+                length += c >= 0xf0 ? 2 : 1;
+        if (length > 0 && length <= 100)
+            payload["entities"] =
+                Json::array({{{"type", "bold"}, {"offset", 0}, {"length", length}}});
+    }
     if (!markup.is_null())
         payload["reply_markup"] = markup;
     db_.write("INSERT INTO outbox(user,method,payload) VALUES(?,'sendMessage',?)",
@@ -47,21 +59,27 @@ void Bot::offer(Id user, Id id) {
     auto d = db_.rows("SELECT * FROM drafts WHERE id=? AND user=?", {id, user})[0];
     auto e = Json::parse(d["estimate"].get<std::string>());
     auto suffix = std::to_string(id) + ":" + std::to_string(d["version"].get<Id>());
-    std::string text = d["day"].get<std::string>() + "\n";
-    if (d["kind"] == "weight")
-        text += "Вес: " + std::to_string(e["amount"].get<double>() / 1000) +
-                " кг. Записать (заменить вес за эту дату)?";
-    else
-        text += estimate_text(e);
+    std::string text = "📅 " + display_day(d["day"]) + "\n\n";
+    if (d["kind"] == "weight") {
+        text += "⚖️ Вес: " + quantity(e["amount"].get<double>() / 1000) + " кг\n\n";
+        auto previous = totals(db_, user, d["day"])["weight"];
+        text += previous.is_null()
+                    ? "Записать измерение?"
+                    : "За этот день уже записано " + quantity(previous.get<double>() / 1000) +
+                          " кг.\nЗаменить предыдущий вес?";
+    } else
+        text += meal_label(d["category"]) + "\n\n" + estimate_text(e);
     std::vector<std::pair<std::string, std::string>> actions;
     if (d["kind"] == "weight" || e.value("status", "") == "estimate")
-        actions.emplace_back("Записать", "save:" + suffix);
+        actions.emplace_back("✅ Записать", "save:" + suffix);
     if (d["kind"] == "meal") {
-        actions.emplace_back("Уточнить порцию", "clarify:" + suffix);
-        actions.emplace_back("Исправить БЖУ", "edit:" + suffix);
-        actions.emplace_back("Повторить AI", "retry:" + suffix);
+        actions.emplace_back("✏️ Исправить значения", "guided:" + suffix);
+        if (cfg_.ai_enabled) {
+            actions.emplace_back("Уточнить порцию", "clarify:" + suffix);
+            actions.emplace_back("Повторить AI", "retry:" + suffix);
+        }
     }
-    actions.emplace_back("Отмена", "cancel:" + suffix);
+    actions.emplace_back("✖️ Отмена", "cancel:" + suffix);
     say(user, text, buttons(actions));
 }
 void Bot::ingest(const Json &updates) {
@@ -143,21 +161,22 @@ void Bot::message(Id u, Id, const std::string &text, Id t) {
         db_.write("DELETE FROM sessions WHERE user=?", {u});
         db_.write("UPDATE drafts SET status='cancelled' WHERE user=? AND status='pending'", {u});
         say(u,
-            text == "/start"
-                ? "Дневник питания. Начните с настроек часового пояса и личных норм. Сейчас: " +
-                      user["tz"].get<std::string>() +
-                      ". Нормы можно заполнить позже. /help — команды, /cancel — отмена."
-                : "Незавершённые операции отменены.",
+            text == "/start" ? "🍽 Твой дневник питания\n\nЕда, вода и вес — всё в одном "
+                               "месте.\nВыбери действие в меню ниже.\n\n🕒 Часовой пояс: " +
+                                   user["tz"].get<std::string>() +
+                                   "\n🎯 Личные нормы можно заполнить позже.\n\n/help — помощь · "
+                                   "/cancel — отмена ввода"
+                             : "Незавершённые операции отменены.",
             menu());
         return;
     }
     if (text == "/help") {
-        say(u, "/water 250 мл\n/weight 82,4 [ДД.ММ.ГГГГ]\n/manual 420 20 18 45 ; обед\n/food "
-               "описание еды\n/fooddate ДД.ММ.ГГГГ описание\n/today\n/stats 7 (или 14)\n/period "
-               "ДД.ММ.ГГГГ ДД.ММ.ГГГГ\n/chart 14\n/chartperiod ДД.ММ.ГГГГ ДД.ММ.ГГГГ\n/goals "
-               "[дата] ккал Б Ж У вода_мл\n/timezone Europe/Moscow\n/reminders on|off\n/rules час1 "
-               "процент1 час2 процент2 процент_ккал\n/entries — последние записи и отмена\n/ai off "
-               "— отозвать согласие\n/cancel");
+        say(u, "📖 Как пользоваться дневником\n\n🍽 Еда → Завтрак / Обед / Ужин → Вручную.\nВведи "
+               "название и значения по шагам или четыре числа сразу.\n\n⚖️ Вес → число в кг → дата "
+               "кнопкой или в календаре.\n\n💧 Вода → готовая порция или своё количество.\n📊 "
+               "Итоги дня и 📅 Статистика — в меню.\n\n/cancel — отменить ввод\n/entries — "
+               "последние записи и удаление\n/timezone Europe/Moscow — часовой пояс\n/reminders on "
+               "или off — напоминания\n/id — твой Telegram ID");
         return;
     }
     if (text == "📊 Итоги дня" || text == "/today") {
@@ -172,13 +191,11 @@ void Bot::message(Id u, Id, const std::string &text, Id t) {
         return;
     }
     if (text == "⚖️ Записать вес") {
-        session(u, "weight", {}, t);
-        say(u, "Вес в кг, при желании дата: 82,4 09.10.2026");
+        screen(u, "weight_value", Json::object(), t);
         return;
     }
     if (text == "🍽 Добавить еду") {
-        session(u, "food", {}, t);
-        say(u, "Опишите еду. Без AI: /manual 420 20 18 45 ; обед");
+        screen(u, "meal_category", {{"day", today}}, t);
         return;
     }
     if (text == "🎯 Мои нормы") {
@@ -254,6 +271,8 @@ void Bot::message(Id u, Id, const std::string &text, Id t) {
         say(u, "Пороги сохранены; окно воды — час после указанного времени.");
         return;
     }
+    if ((text.empty() || text[0] != '/') && ui_message(u, text, t))
+        return;
     auto split = text.find(' ');
     auto cmd = text.substr(0, split);
     auto arg = split == std::string::npos ? "" : text.substr(split + 1);
@@ -263,11 +282,14 @@ void Bot::message(Id u, Id, const std::string &text, Id t) {
     if (!ss.empty()) {
         if (ss[0]["expires"].get<Id>() < t) {
             db_.write("DELETE FROM sessions WHERE user=?", {u});
-            say(u, "Предыдущий диалог истёк. Выберите действие заново.");
-            return;
+            if (text.empty() || text[0] != '/') {
+                say(u, "Предыдущий диалог истёк. Выберите действие заново.");
+                return;
+            }
+        } else {
+            state = ss[0]["state"];
+            payload = Json::parse(ss[0]["payload"].get<std::string>());
         }
-        state = ss[0]["state"];
-        payload = Json::parse(ss[0]["payload"].get<std::string>());
     }
     if (text.empty() || text[0] != '/') {
         cmd = "/" + state;
@@ -391,6 +413,10 @@ void Bot::callback(Id u, const std::string &action, Id t) {
     auto verb = action.substr(0, sep);
     auto value = sep == std::string::npos ? "" : action.substr(sep + 1);
     auto today = local_day(t, db_.rows("SELECT tz FROM users WHERE id=?", {u})[0]["tz"]);
+    if (verb == "ui") {
+        ui_callback(u, value, t);
+        return;
+    }
     if (verb == "water") {
         message(u, u, "/water " + value, t);
         return;
@@ -455,6 +481,17 @@ void Bot::callback(Id u, const std::string &action, Id t) {
         say(u, "Отменено.");
         return;
     }
+    if (verb == "guided") {
+        if (d["kind"] != "meal")
+            throw InputError("Это не запись еды.");
+        screen(u, "meal_name",
+               {{"day", d["day"]},
+                {"category", d["category"]},
+                {"edit_id", id},
+                {"edit_version", d["version"]}},
+               t);
+        return;
+    }
     if (verb == "consent" || verb == "retry") {
         if (verb == "consent")
             db_.write("UPDATE users SET ai_consent=1 WHERE id=?", {u});
@@ -494,8 +531,9 @@ void Bot::callback(Id u, const std::string &action, Id t) {
             "VALUES(?,'meal',?,?,?,?,?,?,?,?,?,?)",
             {u, d["day"], t, d["tz"], k, p, f, c, d["description"], e["items"].dump(), id});
     }
+    db_.write("UPDATE entries SET category=? WHERE id=?", {d["category"], entry});
     db_.write("UPDATE drafts SET status='saved' WHERE id=?", {id});
-    say(u, summary(db_, u, d["day"]),
+    say(u, "✅ Записано\n\n" + summary(db_, u, d["day"]),
         buttons({{"Отменить запись", "undo:" + std::to_string(entry)}}));
 }
 void Bot::period(Id u, const std::string &a, const std::string &b, int page, bool chart) {
@@ -513,25 +551,30 @@ void Bot::period(Id u, const std::string &a, const std::string &b, int page, boo
                   {u, Json({{"start", a}, {"end", b}}).dump()});
         return;
     }
-    int first = page * 7;
+    constexpr int page_size = 3;
+    int first = page * page_size;
     if (first >= static_cast<int>(dates.size()))
         throw InputError("Нет такой страницы.");
-    std::string out = "Период " + a + " — " + b + "\n";
-    for (int i = first; i < std::min(first + 7, static_cast<int>(dates.size())); ++i)
-        out += summary(db_, u, dates[i]) + "\n\n";
+    std::string out = "📊 Статистика\n📅 " + display_day(a) + " — " + display_day(b) + "\n\n";
+    for (int i = first; i < std::min(first + page_size, static_cast<int>(dates.size())); ++i)
+        out += summary(db_, u, dates[i]) + "\n\n────────────\n\n";
     auto total = db_.rows(
         "SELECT COALESCE(SUM(kcal),0) AS kcal,COALESCE(SUM(protein),0) AS "
         "protein,COALESCE(SUM(fat),0) AS fat,COALESCE(SUM(carbs),0) AS carbs,COALESCE(SUM(CASE "
         "WHEN kind='water' THEN amount ELSE "
         "0 END),0) AS water FROM entries WHERE user=? AND deleted=0 AND day BETWEEN ? AND ?",
         {u, a, b})[0];
-    out += "Всего за период записано: " + total["kcal"].dump() + " ккал; Б/Ж/У " +
-           total["protein"].dump() + "/" + total["fat"].dump() + "/" + total["carbs"].dump() +
-           " г, " + total["water"].dump() + " мл. Пустые дни — отсутствие записей.";
+    out +=
+        "📌 Всего за период\n🔥 " + quantity(total["kcal"]) +
+        " ккал\n🥚 Белки: " + quantity(total["protein"]) +
+        " г\n🥑 Жиры: " + quantity(total["fat"]) + " г\n🍞 Углеводы: " + quantity(total["carbs"]) +
+        " г\n💧 Вода: " + quantity(total["water"]) + " мл\n\nСтраница " + std::to_string(page + 1) +
+        " из " + std::to_string((dates.size() + page_size - 1) / page_size) +
+        "\nПустой день означает отсутствие записей.";
     std::vector<std::pair<std::string, std::string>> nav;
     if (page)
         nav.emplace_back("Назад", "page:" + a + " " + b + " " + std::to_string(page - 1));
-    if (first + 7 < static_cast<int>(dates.size()))
+    if (first + page_size < static_cast<int>(dates.size()))
         nav.emplace_back("Далее", "page:" + a + " " + b + " " + std::to_string(page + 1));
     say(u, out, buttons(nav));
 }

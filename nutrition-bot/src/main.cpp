@@ -101,7 +101,8 @@ int main(int argc, char **argv) {
             throw;
         }
         Bot bot(db, cfg);
-        std::clog << "Bot started; polling Telegram, AI " << (cfg.ai_enabled ? "enabled" : "disabled") << '\n';
+        std::clog << "Bot started; polling Telegram, AI "
+                  << (cfg.ai_enabled ? "enabled" : "disabled") << '\n';
         Id last_reminders = 0;
         int failures = 0;
         try {

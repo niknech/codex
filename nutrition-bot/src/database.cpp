@@ -86,7 +86,10 @@ void Database::migrate() {
     auto exists = rows("SELECT name FROM sqlite_master WHERE name='schema_migrations'");
     if (exists.empty())
         exec(schema_sql);
-    else if (rows("SELECT MAX(version) AS v FROM schema_migrations")[0]["v"] != 1)
+    auto version = rows("SELECT MAX(version) AS v FROM schema_migrations")[0]["v"].get<int>();
+    if (version == 1)
+        exec(schema_sql_2);
+    else if (version != 2)
         throw std::runtime_error("Unsupported database schema");
     tx.commit();
 }

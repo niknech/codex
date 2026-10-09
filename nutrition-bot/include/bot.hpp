@@ -14,6 +14,10 @@ class Bot {
              const std::string &description, const Json &estimate, Id time);
     void queue_ai(Id user, Id draft, Id time);
     void period(Id user, const std::string &start, const std::string &end, int page, bool chart);
+    void screen(Id user, const std::string &state, Json payload, Id time);
+    bool ui_message(Id user, const std::string &text, Id time);
+    void ui_callback(Id user, const std::string &action, Id time);
+    void finish_meal(Id user, Json payload, Id time);
 
   public:
     Bot(Database &db, const Config &cfg) : db_(db), cfg_(cfg) {}
