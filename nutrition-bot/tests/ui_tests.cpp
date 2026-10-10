@@ -236,6 +236,65 @@ int main() {
                     utf16 += c >= 0xf0 ? 2 : 1;
             check(utf16 <= 4096, "message fits Telegram length");
         }
+        // Guided AI: consent, category, clarification, confirmation and cost limits.
+        Fixture a;
+        a.cfg.ai_enabled = true;
+        a.cfg.model = "gpt-5-nano";
+        a.cfg.ai_daily_user = 2;
+        a.send("🍽 Добавить еду");
+        a.click(a.action("cat_lunch"));
+        a.click(a.action("ai"));
+        check(a.state() == "meal_ai", "AI description screen");
+        a.send("   ");
+        check(a.db.rows("SELECT * FROM drafts").empty(), "empty AI description rejected");
+        a.send("Рис");
+        auto aid = a.draft_id();
+        auto suffix = std::to_string(aid) + ":1";
+        check(a.db.rows("SELECT * FROM jobs").empty(), "guided AI requires consent");
+        a.click("consent:" + suffix, 22);
+        check(a.db.rows("SELECT * FROM jobs").empty(), "foreign AI consent rejected");
+        a.click("consent:" + suffix);
+        a.click("consent:" + suffix);
+        check(a.db.rows("SELECT * FROM jobs").size() == 1, "duplicate consent costs once");
+        Bot ab(a.db, a.cfg);
+        auto response = [](const Json &estimate) {
+            return Json{{"status", "completed"},
+                        {"output",
+                         Json::array({{{"type", "message"},
+                                       {"content", Json::array({{{"type", "output_text"},
+                                                                 {"text", estimate.dump()}}})}}})}};
+        };
+        ab.ai_one(a.t, [&](const Json &request) {
+            check(request["input"] == "Рис" && request["store"] == false,
+                  "only description sent without storage");
+            check(request["model"] == "gpt-5-nano" && request["reasoning"]["effort"] == "low",
+                  "cheap model bounded reasoning");
+            return response({{"status", "needs_clarification"},
+                             {"question", "Сколько граммов?"},
+                             {"items", Json::array()},
+                             {"assumptions", Json::array()}});
+        });
+        check(totals(a.db, 11, a.day)["kcal"] == 0, "clarification never saved");
+        a.click("clarify:" + std::to_string(aid) + ":2");
+        a.send("100 г варёного риса");
+        ab.ai_one(a.t, [&](const Json &request) {
+            check(request["input"].get<std::string>().find("100 г") != std::string::npos,
+                  "clarification sent with original description");
+            return response(manual_meal("130 3 1 28 ; рис"));
+        });
+        check(totals(a.db, 11, a.day)["kcal"] == 0, "AI result needs confirmation");
+        a.click("save:" + suffix);
+        check(totals(a.db, 11, a.day)["kcal"] == 0, "stale AI save denied");
+        a.click("save:" + std::to_string(aid) + ":4");
+        check(a.db.rows("SELECT category,kcal FROM entries")[0] ==
+                  Json({{"category", "lunch"}, {"kcal", 130}}),
+              "AI retains category on save");
+        a.send("🍽 Добавить еду");
+        a.click(a.action("cat_dinner"));
+        a.click(a.action("ai"));
+        a.send("100 г риса");
+        check(a.db.rows("SELECT * FROM jobs").size() == 2, "AI daily limit enforced");
+        check(totals(a.db, 11, a.day)["kcal"] == 130, "limit does not add food");
         // Save one synthetic preview, without user data, when requested by the developer.
         if (auto path = std::getenv("BOT_UI_PREVIEW")) {
             std::ofstream out(path);

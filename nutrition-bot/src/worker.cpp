@@ -31,9 +31,11 @@ void Bot::queue_ai(Id u, Id id, Id t) {
     db_.write("INSERT INTO jobs(draft,version,user,day,due) VALUES(?,?,?,?,?)",
               {id, d[0]["version"], u, day, t});
     auto suffix = std::to_string(id) + ":" + std::to_string(d[0]["version"].get<Id>());
-    say(u, "Описание в очереди оценки. Еда попадёт в дневник только после подтверждения.",
+    say(u,
+        "🤖 Оцениваю еду…\n\nПосчитаю КБЖУ для всей порции. Если данных мало — попрошу "
+        "уточнить.\n\nЕда попадёт в дневник только после твоего подтверждения.",
         buttons({{"Повторить после сбоя", "retry:" + suffix},
-                 {"Ввести вручную", "edit:" + suffix},
+                 {"✍️ Ввести вручную", "guided:" + suffix},
                  {"Отмена", "cancel:" + suffix}}));
 }
 bool Bot::ai_one(Id t, const AiTransport &transport) {
@@ -50,8 +52,9 @@ bool Bot::ai_one(Id t, const AiTransport &transport) {
         auto drafts = db_.rows(
             "SELECT * FROM drafts WHERE id=? AND version=? AND status='pending' AND expires>=?",
             {job["draft"], job["version"], t});
-        if (drafts.empty() || db_.rows("SELECT ai_consent FROM users WHERE id=?",
-                                       {job["user"]})[0]["ai_consent"] == 0) {
+        if (!cfg_.ai_enabled || drafts.empty() ||
+            db_.rows("SELECT ai_consent FROM users WHERE id=?", {job["user"]})[0]["ai_consent"] ==
+                0) {
             db_.write("UPDATE jobs SET status='cancelled' WHERE id=?", {job["id"]});
             tx.commit();
             return true;
@@ -64,9 +67,18 @@ bool Bot::ai_one(Id t, const AiTransport &transport) {
     std::string failure;
     try {
         estimate = ai_response(transport(ai_request(cfg_.model, d["description"])));
-    } catch (const ApiError &) {
+    } catch (const ApiError &e) {
+        std::cerr << "AI request failed: API status " << e.status << '\n';
         failure = "AI недоступен или превышен лимит. Автоповтора платного запроса нет. Повторите "
                   "кнопкой или введите БЖУ вручную.";
+        if (e.status == 401)
+            failure = "🔑 OpenAI отклонил ключ API. Проверь ключ на сервере. Ручной ввод доступен.";
+        else if (e.status == 403)
+            failure = "🔒 OpenAI запретил доступ. Проверь доступность API для аккаунта и сервера. "
+                      "Ручной ввод доступен.";
+        else if (e.status == 429)
+            failure = "⏳ OpenAI: исчерпан баланс или лимит запросов. Проверь оплату API. "
+                      "Автоматического платного повтора нет.";
     } catch (const InputError &e) {
         failure = e.what();
     } catch (const std::exception &) {
@@ -87,7 +99,7 @@ bool Bot::ai_one(Id t, const AiTransport &transport) {
             say(job["user"], failure,
                 buttons({{"Повторить", "retry:" + std::to_string(d["id"].get<Id>()) + ":" +
                                            std::to_string(d["version"].get<Id>())},
-                         {"Вручную", "edit:" + std::to_string(d["id"].get<Id>()) + ":" +
+                         {"Вручную", "guided:" + std::to_string(d["id"].get<Id>()) + ":" +
                                          std::to_string(d["version"].get<Id>())}}));
     }
     tx.commit();

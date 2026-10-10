@@ -88,8 +88,15 @@ void Bot::screen(Id u, const std::string &state, Json p, Id t) {
     } else if (state == "meal_method") {
         // Exactly two choices, as requested. /cancel remains available everywhere.
         say(u, meal_label(p["category"]) + "\n\nКак добавим еду?",
-            buttons({{"🤖 С помощью AI (временно не работает)", prefix + "ai"},
+            buttons({{cfg_.ai_enabled ? "🤖 С помощью AI" : "🤖 AI недоступен", prefix + "ai"},
                      {"✍️ Вручную", prefix + "manual"}}));
+    } else if (state == "meal_ai") {
+        say(u,
+            meal_label(p["category"]) +
+                " · оценка AI\n\n🍽 Опиши еду и размер порции.\nНапример: 2 яйца, 100 г варёного "
+                "риса и чай без сахара.\n\nAI оценит калории, белки, жиры и углеводы. Результат "
+                "можно исправить перед записью.\nПока принимается только текст.",
+            choices({{"↩️ Назад", "back"}}));
     } else if (state == "meal_name") {
         say(u,
             meal_label(p["category"]) +
@@ -178,7 +185,24 @@ bool Bot::ui_message(Id u, const std::string &text, Id t) {
         return true;
     }
     auto p = Json::parse(rows[0]["payload"].get<std::string>());
-    if (state == "meal_name") {
+    if (state == "meal_ai") {
+        if (!cfg_.ai_enabled)
+            throw InputError("🤖 AI отключён. Выбери ручной ввод через меню.");
+        if (text.find_first_not_of(" \t\r\n") == std::string::npos || text.size() > 4000)
+            throw InputError("🍽 Напиши описание еды покороче, вместе с размером порции.");
+        auto id = draft(u, "meal", p["day"], text, Json::object(), t);
+        db_.write("UPDATE drafts SET category=? WHERE id=?", {p["category"], id});
+        db_.write("DELETE FROM sessions WHERE user=?", {u});
+        if (db_.rows("SELECT ai_consent FROM users WHERE id=?", {u})[0]["ai_consent"] == 0)
+            say(u,
+                "🤖 Оценка через OpenAI\n\nОтправлю только описание еды. Вес, Telegram ID и "
+                "историю дневника не передаю.\n\nРазрешить отправку? Согласие можно отозвать: /ai "
+                "off",
+                buttons({{"✅ Разрешить и оценить", "consent:" + std::to_string(id) + ":1"},
+                         {"✖️ Отмена", "cancel:" + std::to_string(id) + ":1"}}));
+        else
+            queue_ai(u, id, t);
+    } else if (state == "meal_name") {
         if (text.find_first_not_of(" \t\r\n") == std::string::npos || text.size() > 200)
             throw InputError("🍽 Напиши короткое название блюда.\nНапример: омлет и тост.");
         p["name"] = text;
@@ -236,6 +260,10 @@ void Bot::ui_callback(Id u, const std::string &action, Id t) {
     }
     if (state == "meal_method") {
         if (value == "ai") {
+            if (cfg_.ai_enabled) {
+                screen(u, "meal_ai", p, t);
+                return;
+            }
             say(u, "🤖 AI временно недоступен.\n\nНажми «Вручную» — я помогу заполнить значения по "
                    "шагам.");
             return;
@@ -246,7 +274,7 @@ void Bot::ui_callback(Id u, const std::string &action, Id t) {
         }
     }
     if (value == "back") {
-        if (state == "meal_name")
+        if (state == "meal_name" || state == "meal_ai")
             screen(u, "meal_method", p, t);
         else if (state == "meal_values") {
             int step = p["step"];
