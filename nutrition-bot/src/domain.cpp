@@ -250,8 +250,10 @@ std::string estimate_text(const Json &d) {
         if (out.str().size() + line.size() < 2800)
             out << line;
     }
+    if (!d["assumptions"].empty())
+        out << "\n💡 Как я оценил порцию\n";
     for (auto &a : d["assumptions"]) {
-        auto line = "Принято: " + a.get<std::string>() + "\n";
+        auto line = "• " + a.get<std::string>() + "\n";
         if (out.str().size() + line.size() < 3200)
             out << line;
     }

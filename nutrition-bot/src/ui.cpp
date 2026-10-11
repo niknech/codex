@@ -6,6 +6,8 @@
 namespace nb {
 namespace {
 const char *fields[] = {"kcal", "protein", "fat", "carbs"};
+const char *nutrients[] = {"kcal", "protein_g", "fat_g", "carbs_g"};
+const char *nutrient_labels[] = {"🔥 Калории", "🥚 Белки", "🥑 Жиры", "🍞 Углеводы"};
 const char *prompts[] = {"🔥 Сколько калорий?", "🥚 Сколько белков?", "🥑 Сколько жиров?",
                          "🍞 Сколько углеводов?"};
 std::string month_name(const std::string &first) {
@@ -80,7 +82,36 @@ void Bot::screen(Id u, const std::string &state, Json p, Id t) {
         values.emplace_back("✖️ Отмена", prefix + "cancel");
         return buttons(values);
     };
-    if (state == "meal_category") {
+    if (state == "meal_edit_items") {
+        std::vector<std::pair<std::string, std::string>> actions;
+        auto &items = p["estimate"]["items"];
+        for (size_t i = 0; i < items.size(); ++i)
+            actions.emplace_back(items[i]["name"], "item_" + std::to_string(i));
+        actions.emplace_back("↩️ К оценке", "return");
+        say(u, "✏️ Исправим КБЖУ\n\nВыбери продукт. Значения остальных продуктов сохранятся.",
+            choices(actions));
+    } else if (state == "meal_edit_fields" || state == "meal_edit_value") {
+        auto &item = p["estimate"]["items"][p["item"].get<size_t>()];
+        std::string text = "✏️ " + item["name"].get<std::string>() + "\n\n";
+        std::vector<std::pair<std::string, std::string>> actions;
+        if (state == "meal_edit_fields") {
+            for (int i = 0; i < 4; ++i)
+                actions.emplace_back(std::string(nutrient_labels[i]) + ": " +
+                                         quantity(item[nutrients[i]].get<double>()) +
+                                         (i == 0 ? " ккал" : " г"),
+                                     "field_" + std::to_string(i));
+            text += "Какое значение изменить?\nОстальные числа и название останутся прежними.";
+            actions.emplace_back("↩️ К оценке", "return");
+        } else {
+            int field = p["field"];
+            text += std::string(nutrient_labels[field]) +
+                    " сейчас: " + quantity(item[nutrients[field]].get<double>()) +
+                    (field == 0 ? " ккал" : " г");
+            text += "\n\nВведи новое число для этой порции.";
+            actions.emplace_back("↩️ Назад", "fields");
+        }
+        say(u, text, choices(actions));
+    } else if (state == "meal_category") {
         say(u, "🍽 Добавим еду\n\nК какому приёму пищи её отнести?",
             choices({{"🌅 Завтрак", "cat_breakfast"},
                      {"☀️ Обед", "cat_lunch"},
@@ -186,7 +217,21 @@ bool Bot::ui_message(Id u, const std::string &text, Id t) {
         return true;
     }
     auto p = Json::parse(rows[0]["payload"].get<std::string>());
-    if (state == "meal_ai") {
+    if (state == "meal_edit_value") {
+        int field = p["field"];
+        auto &estimate = p["estimate"];
+        auto &item = estimate["items"][p["item"].get<size_t>()];
+        item[nutrients[field]] = number(text, 0, field == 0 ? 20000 : 2000);
+        item["basis"] = "manual";
+        validate_estimate(estimate);
+        db_.write("UPDATE drafts SET estimate=?,version=version+1 WHERE id=? AND user=? AND "
+                  "version=? AND status='pending' AND expires>=?",
+                  {estimate.dump(), p["edit_id"], u, p["edit_version"], t});
+        if (!db_.changes())
+            throw InputError("Оценка уже изменилась. Открой последнюю карточку.");
+        db_.write("DELETE FROM sessions WHERE user=?", {u});
+        offer(u, p["edit_id"]);
+    } else if (state == "meal_ai") {
         if (!cfg_.ai_enabled)
             throw InputError("🤖 AI отключён. Выбери ручной ввод через меню.");
         if (text.find_first_not_of(" \t\r\n") == std::string::npos || text.size() > 4000)
@@ -239,6 +284,39 @@ void Bot::ui_callback(Id u, const std::string &action, Id t) {
     if (std::to_string(p.value("flow", Id{0})) != action.substr(0, split))
         throw InputError("👆 Используй кнопки под последним сообщением.");
     auto value = action.substr(split + 1);
+    if (state.rfind("meal_edit_", 0) == 0) {
+        if (db_.rows("SELECT id FROM drafts WHERE id=? AND user=? AND version=? AND "
+                     "status='pending' AND expires>=?",
+                     {p["edit_id"], u, p["edit_version"], t})
+                .empty())
+            throw InputError("Оценка уже изменилась. Открой последнюю карточку.");
+        if (value == "return" || value == "cancel") {
+            db_.write("DELETE FROM sessions WHERE user=?", {u});
+            offer(u, p["edit_id"]);
+            return;
+        }
+        if (state == "meal_edit_items" && value.rfind("item_", 0) == 0) {
+            auto index = number(value.substr(5), 0, p["estimate"]["items"].size() - 1);
+            if (std::floor(index) != index)
+                throw InputError("Неверная кнопка.");
+            p["item"] = static_cast<int>(index);
+            screen(u, "meal_edit_fields", p, t);
+            return;
+        }
+        if (state == "meal_edit_fields" && value.rfind("field_", 0) == 0) {
+            auto field = number(value.substr(6), 0, 3);
+            if (std::floor(field) != field)
+                throw InputError("Неверная кнопка.");
+            p["field"] = static_cast<int>(field);
+            screen(u, "meal_edit_value", p, t);
+            return;
+        }
+        if (state == "meal_edit_value" && value == "fields") {
+            screen(u, "meal_edit_fields", p, t);
+            return;
+        }
+        throw InputError("Кнопка недоступна.");
+    }
     if (value == "noop")
         return;
     if (value == "cancel") {

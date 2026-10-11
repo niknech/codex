@@ -491,6 +491,17 @@ void Bot::callback(Id u, const std::string &action, Id t) {
     if (verb == "guided") {
         if (d["kind"] != "meal")
             throw InputError("Это не запись еды.");
+        auto estimate = Json::parse(d["estimate"].get<std::string>());
+        if (estimate.value("status", "") == "estimate") {
+            validate_estimate(estimate);
+            screen(u, estimate["items"].size() == 1 ? "meal_edit_fields" : "meal_edit_items",
+                   {{"edit_id", id},
+                    {"edit_version", d["version"]},
+                    {"estimate", estimate},
+                    {"item", 0}},
+                   t);
+            return;
+        }
         screen(u, "meal_name",
                {{"day", d["day"]},
                 {"category", d["category"]},

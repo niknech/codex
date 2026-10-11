@@ -169,9 +169,17 @@ int main() {
         f.send("200 10 5 30");
         id = f.draft_id();
         f.click("guided:" + std::to_string(id) + ":1");
-        f.send("Суп, исправлено");
-        f.click(f.action("compact"));
-        f.send("150 10 5 20");
+        check(f.state() == "meal_edit_fields", "edit skips full manual wizard");
+        f.click(f.action("field_0"));
+        f.send("-5");
+        check(f.state() == "meal_edit_value", "invalid edit stays on field");
+        f.send("150");
+        auto edited =
+            Json::parse(f.db.rows("SELECT estimate FROM drafts WHERE id=?", {id})[0]["estimate"]
+                            .get<std::string>());
+        check(edited["items"][0]["name"] == "Суп" && edited["items"][0]["protein_g"] == 10 &&
+                  edited["items"][0]["carbs_g"] == 30,
+              "edit preserves name and other nutrients");
         f.click("save:" + std::to_string(id) + ":1");
         check(totals(f.db, 11, f.day)["kcal"] == 450, "old confirmation invalid after editing");
         f.click("save:" + std::to_string(id) + ":2");
@@ -301,6 +309,40 @@ int main() {
         a.send("100 г риса");
         check(a.db.rows("SELECT * FROM jobs").size() == 2, "AI daily limit enforced");
         check(totals(a.db, 11, a.day)["kcal"] == 130, "limit does not add food");
+        Fixture e;
+        e.send("/manual 200 10 5 20 ; стейк");
+        auto eid = e.draft_id();
+        auto meal = manual_meal("200 10 5 20 ; стейк");
+        meal["items"].push_back(manual_meal("100 2 3 15 ; сок")["items"][0]);
+        meal["assumptions"] = Json::array({"Считаю половину стейка за 150 г"});
+        e.db.write("UPDATE drafts SET estimate=? WHERE id=?", {meal.dump(), eid});
+        e.click("guided:" + std::to_string(eid) + ":1", 22);
+        check(e.db.rows("SELECT * FROM sessions WHERE user=22").empty(),
+              "foreign nutrient edit denied");
+        e.click("guided:" + std::to_string(eid) + ":1");
+        check(e.state() == "meal_edit_items", "multi-item estimate selects product");
+        e.click(e.action("item_1"));
+        e.click(e.action("field_1"));
+        e.send("4,5");
+        auto changed =
+            Json::parse(e.db.rows("SELECT estimate FROM drafts WHERE id=?", {eid})[0]["estimate"]
+                            .get<std::string>());
+        check(changed["items"][0] == meal["items"][0], "unselected food unchanged");
+        check(changed["items"][1]["protein_g"] == 4.5 && changed["items"][1]["kcal"] == 100,
+              "selected nutrient changed only");
+        check(changed["assumptions"] == meal["assumptions"], "portion explanation retained");
+        auto explanation = estimate_text(changed);
+        check(explanation.find("💡 Как я оценил порцию") != std::string::npos &&
+                  explanation.find("Принято:") == std::string::npos,
+              "friendly assumption heading");
+        e.click("guided:" + std::to_string(eid) + ":2");
+        e.click(e.action("item_0"));
+        e.click(e.action("field_0"));
+        e.db.write("UPDATE drafts SET version=version+1 WHERE id=?", {eid});
+        e.send("1");
+        check(Json::parse(e.db.rows("SELECT estimate FROM drafts WHERE id=?", {eid})[0]["estimate"]
+                              .get<std::string>()) == changed,
+              "stale editor cannot overwrite newer estimate");
         // Save one synthetic preview, without user data, when requested by the developer.
         if (auto path = std::getenv("BOT_UI_PREVIEW")) {
             std::ofstream out(path);
