@@ -250,9 +250,10 @@ int main() {
         a.send("Рис");
         auto aid = a.draft_id();
         auto suffix = std::to_string(aid) + ":1";
-        check(a.db.rows("SELECT * FROM jobs").empty(), "guided AI requires consent");
+        check(a.db.rows("SELECT * FROM jobs").size() == 1,
+              "AI selection starts estimate immediately");
         a.click("consent:" + suffix, 22);
-        check(a.db.rows("SELECT * FROM jobs").empty(), "foreign AI consent rejected");
+        check(a.db.rows("SELECT * FROM jobs").size() == 1, "foreign AI consent rejected");
         a.click("consent:" + suffix);
         a.click("consent:" + suffix);
         check(a.db.rows("SELECT * FROM jobs").size() == 1, "duplicate consent costs once");
@@ -269,10 +270,12 @@ int main() {
                   "only description sent without storage");
             check(request["model"] == "gpt-5-nano" && request["reasoning"]["effort"] == "low",
                   "cheap model bounded reasoning");
-            return response({{"status", "needs_clarification"},
-                             {"question", "Сколько граммов?"},
-                             {"items", Json::array()},
-                             {"assumptions", Json::array()}});
+            check(request["text"]["format"]["schema"]["properties"]["status"]["enum"] ==
+                      Json::array({"estimate", "not_food"}),
+                  "AI cannot return a clarification question");
+            auto estimated = manual_meal("260 6 2 56 ; рис 200 г");
+            estimated["assumptions"] = Json::array({"Порция риса 200 г"});
+            return response(estimated);
         });
         check(totals(a.db, 11, a.day)["kcal"] == 0, "clarification never saved");
         a.click("clarify:" + std::to_string(aid) + ":2");
@@ -280,6 +283,9 @@ int main() {
         ab.ai_one(a.t, [&](const Json &request) {
             check(request["input"].get<std::string>().find("100 г") != std::string::npos,
                   "clarification sent with original description");
+            check(request["input"].get<std::string>().find("Порция риса 200 г") !=
+                      std::string::npos,
+                  "previous assumptions available for correction");
             return response(manual_meal("130 3 1 28 ; рис"));
         });
         check(totals(a.db, 11, a.day)["kcal"] == 0, "AI result needs confirmation");

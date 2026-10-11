@@ -95,7 +95,8 @@ void Bot::screen(Id u, const std::string &state, Json p, Id t) {
             meal_label(p["category"]) +
                 " · оценка AI\n\n🍽 Опиши еду и размер порции.\nНапример: 2 яйца, 100 г варёного "
                 "риса и чай без сахара.\n\nAI оценит калории, белки, жиры и углеводы. Результат "
-                "можно исправить перед записью.\nПока принимается только текст.",
+                "можно исправить перед записью.\nОписание отправится в OpenAI; /ai off — "
+                "отключить.",
             choices({{"↩️ Назад", "back"}}));
     } else if (state == "meal_name") {
         say(u,
@@ -193,15 +194,8 @@ bool Bot::ui_message(Id u, const std::string &text, Id t) {
         auto id = draft(u, "meal", p["day"], text, Json::object(), t);
         db_.write("UPDATE drafts SET category=? WHERE id=?", {p["category"], id});
         db_.write("DELETE FROM sessions WHERE user=?", {u});
-        if (db_.rows("SELECT ai_consent FROM users WHERE id=?", {u})[0]["ai_consent"] == 0)
-            say(u,
-                "🤖 Оценка через OpenAI\n\nОтправлю только описание еды. Вес, Telegram ID и "
-                "историю дневника не передаю.\n\nРазрешить отправку? Согласие можно отозвать: /ai "
-                "off",
-                buttons({{"✅ Разрешить и оценить", "consent:" + std::to_string(id) + ":1"},
-                         {"✖️ Отмена", "cancel:" + std::to_string(id) + ":1"}}));
-        else
-            queue_ai(u, id, t);
+        db_.write("UPDATE users SET ai_consent=1 WHERE id=?", {u});
+        queue_ai(u, id, t);
     } else if (state == "meal_name") {
         if (text.find_first_not_of(" \t\r\n") == std::string::npos || text.size() > 200)
             throw InputError("🍽 Напиши короткое название блюда.\nНапример: омлет и тост.");

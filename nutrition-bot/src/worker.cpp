@@ -31,9 +31,7 @@ void Bot::queue_ai(Id u, Id id, Id t) {
     db_.write("INSERT INTO jobs(draft,version,user,day,due) VALUES(?,?,?,?,?)",
               {id, d[0]["version"], u, day, t});
     auto suffix = std::to_string(id) + ":" + std::to_string(d[0]["version"].get<Id>());
-    say(u,
-        "🤖 Оцениваю еду…\n\nПосчитаю КБЖУ для всей порции. Если данных мало — попрошу "
-        "уточнить.\n\nЕда попадёт в дневник только после твоего подтверждения.",
+    say(u, "🤖 Считаю КБЖУ…\nПокажу порцию и принятые допущения — при желании их можно уточнить.",
         buttons({{"Повторить после сбоя", "retry:" + suffix},
                  {"✍️ Ввести вручную", "guided:" + suffix},
                  {"Отмена", "cancel:" + suffix}}));

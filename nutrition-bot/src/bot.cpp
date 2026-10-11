@@ -75,8 +75,7 @@ void Bot::offer(Id user, Id id) {
     if (d["kind"] == "meal") {
         actions.emplace_back("✏️ Исправить значения", "guided:" + suffix);
         if (cfg_.ai_enabled) {
-            actions.emplace_back("Уточнить порцию", "clarify:" + suffix);
-            actions.emplace_back("Повторить AI", "retry:" + suffix);
+            actions.emplace_back("💬 Уточнить", "clarify:" + suffix);
         }
     }
     actions.emplace_back("✖️ Отмена", "cancel:" + suffix);
@@ -332,12 +331,19 @@ void Bot::message(Id u, Id, const std::string &text, Id t) {
         Id id;
         if (cmd == "/clarify") {
             id = payload.at("id");
-            auto d = db_.rows("SELECT description FROM drafts WHERE id=? AND user=? AND "
+            auto d = db_.rows("SELECT description,estimate FROM drafts WHERE id=? AND user=? AND "
                               "status='pending' AND expires>=? AND version=?",
                               {id, u, t, payload.at("version")});
             if (d.empty())
                 throw InputError("Черновик устарел.");
-            std::string desc = d[0]["description"].get<std::string>() + "\nУточнение: " + arg;
+            auto previous = Json::parse(d[0]["estimate"].get<std::string>());
+            std::string context;
+            if (previous.value("status", "") == "needs_clarification")
+                context = "\nПредыдущий вопрос: " + previous["question"].get<std::string>();
+            else if (previous.value("status", "") == "estimate")
+                context = "\nПредыдущая оценка: " + estimate_text(previous);
+            std::string desc =
+                d[0]["description"].get<std::string>() + context + "\nУточнение: " + arg;
             if (desc.size() > 7000)
                 throw InputError("Слишком много уточнений. Начните новое описание.");
             db_.write("UPDATE drafts SET description=?,version=version+1,estimate='{}' WHERE id=?",
@@ -501,7 +507,9 @@ void Bot::callback(Id u, const std::string &action, Id t) {
     }
     if (verb == "edit" || verb == "clarify") {
         session(u, verb, {{"id", id}, {"version", d["version"]}}, t);
-        say(u, verb == "edit" ? "Введите ккал Б Ж У ; название" : "Уточните порцию или состав.");
+        say(u, verb == "edit" ? "Введите ккал Б Ж У ; название"
+                              : "💬 Напиши, что изменить.\nНапример: сок 100 мл, яйца жареные. "
+                                "Пересчитаю всю порцию.");
         return;
     }
     if (verb != "save")
