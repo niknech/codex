@@ -87,9 +87,13 @@ void Database::migrate() {
     if (exists.empty())
         exec(schema_sql);
     auto version = rows("SELECT MAX(version) AS v FROM schema_migrations")[0]["v"].get<int>();
-    if (version == 1)
+    if (version == 1) {
         exec(schema_sql_2);
-    else if (version != 2)
+        version = 2;
+    }
+    if (version == 2)
+        exec(schema_sql_3);
+    else if (version != 3)
         throw std::runtime_error("Unsupported database schema");
     tx.commit();
 }

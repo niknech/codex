@@ -1,3 +1,4 @@
 #pragma once
 inline constexpr const char* schema_sql = R"SQL(@SCHEMA_SQL@)SQL";
 inline constexpr const char* schema_sql_2 = R"SQL(@SCHEMA_SQL_2@)SQL";
+inline constexpr const char* schema_sql_3 = R"SQL(@SCHEMA_SQL_3@)SQL";

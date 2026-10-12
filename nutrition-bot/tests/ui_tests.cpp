@@ -1,5 +1,6 @@
 #include "bot.hpp"
 #include "schema.hpp"
+#include "products.hpp"
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -86,8 +87,8 @@ int main() {
         check(old.rows("SELECT amount,category FROM entries")[0] ==
                   Json({{"amount", 82400}, {"category", "unspecified"}}),
               "migration preserves old weight");
-        check(old.rows("SELECT MAX(version) AS v FROM schema_migrations")[0]["v"] == 2,
-              "migration version 2");
+        check(old.rows("SELECT MAX(version) AS v FROM schema_migrations")[0]["v"] == 3,
+              "migration version 3");
         auto cal = calendar_buttons("2024-02-01", "2024-03-01", "ui:1:");
         bool leap = false;
         for (auto &row : cal["inline_keyboard"])
@@ -112,7 +113,7 @@ int main() {
               "foreign wizard button rejected");
         f.click(stale);
         check(f.state() == "meal_method", "category step");
-        check(f.last()["reply_markup"]["inline_keyboard"].size() == 2, "two input methods");
+        check(f.last()["reply_markup"]["inline_keyboard"].size() == 3, "three input methods");
         auto manual = f.action("manual"), ai = f.action("ai");
         f.click(ai);
         check(f.db.rows("SELECT * FROM jobs").empty(), "disabled AI no request");
@@ -343,6 +344,98 @@ int main() {
         check(Json::parse(e.db.rows("SELECT estimate FROM drafts WHERE id=?", {eid})[0]["estimate"]
                               .get<std::string>()) == changed,
               "stale editor cannot overwrite newer estimate");
+        Fixture b;
+        b.cfg.admins={11};
+        b.send("/ai_bonus 22",22);
+        check(b.db.rows("SELECT * FROM ai_bonus").empty(),"non-admin bonus denied");
+        b.send("/ai_bonus 22");
+        check(b.db.rows("SELECT amount FROM ai_bonus")[0]["amount"]==5,"admin bonus default and update dedup");
+        b.send("/ai_bonus 22 3");
+        check(b.db.rows("SELECT amount FROM ai_bonus")[0]["amount"]==8,"bonus increments");
+        b.send("/ai_bonus 22 1.5");
+        check(b.db.rows("SELECT amount FROM ai_bonus")[0]["amount"]==8,"fractional bonus rejected");
+        b.send("🍽 Добавить еду"); b.click(b.action("cat_breakfast")); b.click(b.action("barcode"));
+        b.send("3017620422003");
+        Bot bb(b.db,b.cfg);
+        Json product={{"barcode","3017620422003"},{"name","Тест"},{"unit","g"},{"package",200},
+            {"kcal",500},{"protein",10},{"fat",20},{"carbs",60},{"source","test"},{"url",""}};
+        auto lookup=[&](const std::string &) { return Json{{"product",{{"code","3017620422003"},
+            {"product_name","Тест"},{"product_quantity_unit","g"},{"product_quantity",200},
+            {"nutriments",{{"energy-kcal_100g",500},{"proteins_100g",10},{"fat_100g",20},{"carbohydrates_100g",60}}}}}}; };
+        auto no_ai=[](const Json &) -> Json { throw std::runtime_error("unexpected AI"); };
+        auto no_photo=[](const std::string &) { return std::string(); };
+        bb.product_one(b.t,no_ai,lookup,no_photo);
+        check(b.state()=="product_review","OFF lookup without AI");
+        auto accept=b.action("accept"); b.click(accept,22);
+        check(b.db.rows("SELECT * FROM products").empty(),"foreign product accept rejected");
+        b.click(accept);
+        check(b.state()=="product_amount","confirmed product portion");
+        b.click(b.action("package"));
+        check(totals(b.db,11,b.day)["kcal"]==0,"product awaits meal save");
+        b.click("save:"+std::to_string(b.draft_id())+":1");
+        check(totals(b.db,11,b.day)["kcal"]==1000,"package nutrition scaled");
+        b.send("🍽 Добавить еду"); b.click(b.action("cat_lunch")); b.click(b.action("barcode"));
+        b.send("3017620422003");
+        check(b.state()=="product_review" && b.db.rows("SELECT * FROM product_jobs").size()==1,"confirmed cache avoids network");
+        check(product_estimate(product,50)["items"][0]["kcal"]==250,"50 gram scaling");
+        auto incomplete=lookup(""); incomplete["product"]["nutriments"].erase("fat_100g");
+        check(off_product(incomplete,"3017620422003").is_null(),"missing nutrients not zero");
+        Fixture w;
+        w.cfg.ai_enabled=true; w.cfg.ai_web_search=true; w.cfg.model="gpt-6-luna";
+        w.cfg.ai_daily_user=1; w.cfg.admins={11};
+        w.send("🍽 Добавить еду"); w.click(w.action("cat_dinner")); w.click(w.action("barcode"));
+        w.send("3017620422003");
+        Bot wb(w.db,w.cfg);
+        wb.product_one(w.t,no_ai,[](const std::string &){return Json::object();},no_photo);
+        check(w.db.rows("SELECT * FROM product_jobs WHERE paid=1").size()==1,"OFF miss reserves AI fallback");
+        auto wrap=[](const Json &p) { return Json{{"status","completed"},{"output",Json::array({
+            {{"type","message"},{"content",Json::array({{{"type","output_text"},{"text",p.dump()}}})}}})}}; };
+        wb.product_one(w.t,[&](const Json &request){
+            check(request["tools"][0]["type"]=="web_search","barcode web request");
+            return wrap({{"found",false}});
+        },lookup,no_photo);
+        check(w.state()=="product_missing","unmatched barcode asks label");
+        auto photo=[&] { w.ingest({{"update_id",++w.seq},{"message",{{"from",{{"id",11}}},
+            {"chat",{{"id",11},{"type","private"}}},{"photo",Json::array({{{"file_id","fixture-photo"}}})}}}}); };
+        photo();
+        check(w.state()=="product_missing","photo shares exhausted AI quota");
+        w.send("/ai_bonus 11"); photo();
+        check(w.state()=="product_wait","bonus enables photo job");
+        product["found"]=true;
+        wb.product_one(w.t,[&](const Json &request){
+            check(!request.contains("tools") && request["input"][0]["content"][1]["type"]=="input_image","label uses image without web");
+            return wrap(product);
+        },lookup,[](const std::string &){return std::string("data:image/jpeg;base64,fixture");});
+        check(w.state()=="product_review","label returns review");
+        check(w.db.rows("SELECT * FROM products").empty(),"label not cached before confirmation");
+        photo(); w.send("/ai off");
+        bool sent=false;
+        wb.product_one(w.t,[&](const Json &){sent=true; return wrap(product);},lookup,no_photo);
+        check(!sent && w.state().empty(),"revoked consent cancels photo job");
+        w.cfg.ai_daily_global=2;
+        w.send("🍽 Добавить еду"); w.click(w.action("cat_lunch")); w.click(w.action("ai")); w.send("рис");
+        check(w.db.rows("SELECT * FROM jobs").empty(),"bonus cannot bypass global quota");
+        auto unverified=product; unverified["url"]="https://invented.invalid";
+        check(product_response(wrap(unverified),"web","3017620422003").is_null(),"web product needs actual source");
+        bool checksum=false; try { barcode("3017620422004"); } catch(const InputError &) {checksum=true;}
+        check(checksum,"invalid barcode checksum rejected");
+        Fixture scan;
+        scan.cfg.ai_enabled=true; scan.cfg.model="gpt-6-luna";
+        scan.send("🍽 Добавить еду"); scan.click(scan.action("cat_breakfast")); scan.click(scan.action("barcode"));
+        scan.ingest({{"update_id",++scan.seq},{"message",{{"from",{{"id",11}}},
+            {"chat",{{"id",11},{"type","private"}}},{"photo",Json::array({{{"file_id","fixture"}}})}}}});
+        Bot sb(scan.db,scan.cfg);
+        sb.product_one(scan.t,[&](const Json &){return wrap({{"found",true},{"barcode","3017620422003"}});},lookup,no_photo);
+        check(scan.state()=="product_scan_check","photo code requires confirmation");
+        scan.click(scan.action("lookup"));
+        sb.product_one(scan.t,no_ai,[](const std::string &){return Json::object();},no_photo);
+        check(scan.state()=="product_missing" && scan.db.rows("SELECT * FROM product_jobs WHERE paid=1").size()==1,
+              "search disabled does not enqueue web fallback");
+        scan.cfg.ai_daily_user=1;
+        scan.db.write("INSERT INTO ai_bonus VALUES(?,?,5)",{11,shift_day(local_day(scan.t,"Etc/UTC"),-1)});
+        scan.ingest({{"update_id",++scan.seq},{"message",{{"from",{{"id",11}}},
+            {"chat",{{"id",11},{"type","private"}}},{"photo",Json::array({{{"file_id","fixture"}}})}}}});
+        check(scan.state()=="product_missing","yesterday bonus does not extend today quota");
         // Save one synthetic preview, without user data, when requested by the developer.
         if (auto path = std::getenv("BOT_UI_PREVIEW")) {
             std::ofstream out(path);

@@ -3,6 +3,17 @@
 #include <filesystem>
 #include <iostream>
 namespace nb {
+void Bot::check_ai_limit(Id u, Id t) {
+    auto day = local_day(t, "Etc/UTC");
+    auto counts = db_.rows("SELECT COUNT(*) AS total,COALESCE(SUM(user=?),0) AS personal FROM "
+        "(SELECT user FROM jobs WHERE day=? UNION ALL SELECT user FROM product_jobs WHERE day=? AND paid=1)",
+        {u, day, day})[0];
+    auto bonus = db_.rows("SELECT COALESCE(SUM(amount),0) AS n FROM ai_bonus WHERE user=? AND day=?", {u,day})[0]["n"].get<int>();
+    if (counts["total"].get<int>() >= cfg_.ai_daily_global)
+        throw InputError("Общий дневной лимит AI исчерпан. Ручной ввод доступен.");
+    if (counts["personal"].get<int>() >= cfg_.ai_daily_user + bonus)
+        throw InputError("Твой дневной лимит AI исчерпан. Попроси владельца добавить запросы.");
+}
 void Bot::queue_ai(Id u, Id id, Id t) {
     if (!cfg_.ai_enabled)
         throw InputError("AI отключён. Используйте ручной ввод.");
@@ -22,12 +33,7 @@ void Bot::queue_ai(Id u, Id id, Id t) {
     }
     // Limits count reservations, including failed requests, in a common UTC day.
     auto day = local_day(t, "Etc/UTC");
-    auto counts = db_.rows(
-        "SELECT COUNT(*) AS total,COALESCE(SUM(user=?),0) AS personal FROM jobs WHERE day=?",
-        {u, day})[0];
-    if (counts["total"].get<int>() >= cfg_.ai_daily_global ||
-        counts["personal"].get<int>() >= cfg_.ai_daily_user)
-        throw InputError("Дневной лимит AI исчерпан. Ручной ввод доступен.");
+    check_ai_limit(u, t);
     db_.write("INSERT INTO jobs(draft,version,user,day,due) VALUES(?,?,?,?,?)",
               {id, d[0]["version"], u, day, t});
     auto suffix = std::to_string(id) + ":" + std::to_string(d[0]["version"].get<Id>());

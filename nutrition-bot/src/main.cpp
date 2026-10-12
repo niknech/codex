@@ -68,6 +68,7 @@ int main(int argc, char **argv) {
         std::signal(SIGTERM, stop);
         // A crash during a paid request has an ambiguous outcome. Do not retry automatically.
         db.exec("UPDATE jobs SET status='failed' WHERE status='running'");
+        db.exec("UPDATE product_jobs SET status='failed',payload='{}' WHERE status='running'");
         std::atomic<bool> worker_failed = false;
         auto worker = [&](bool ai) {
             try {
@@ -78,7 +79,9 @@ int main(int argc, char **argv) {
                     if (ai) {
                         if (!bot.ai_one(now(), [&](const Json &request) {
                                 return post(cfg.ai_url, request, cfg.key, 25);
-                            }))
+                            }) && !bot.product_one(now(), [&](const Json &request) {
+                                return post(cfg.ai_url,request,cfg.key,35);
+                            }, lookup_product, [&](const std::string &id) { return tg.photo_data(id); }))
                             pause(1);
                     } else {
                         bot.deliver_one(tg, now());
@@ -94,8 +97,7 @@ int main(int argc, char **argv) {
         std::jthread delivery([&] { worker(false); });
         std::jthread ai;
         try {
-            if (cfg.ai_enabled)
-                ai = std::jthread([&] { worker(true); });
+            ai = std::jthread([&] { worker(true); });
         } catch (...) {
             stopping = true;
             throw;

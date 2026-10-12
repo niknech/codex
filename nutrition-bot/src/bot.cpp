@@ -121,6 +121,8 @@ bool Bot::process_one(Id time) {
                     try {
                         if (cb)
                             callback(user, envelope.value("data", ""), time);
+                        else if (msg.contains("photo"))
+                            product_photo(user, msg["photo"], time);
                         else
                             message(user, msg["chat"]["id"], text, time);
                         db_.exec("RELEASE action");
@@ -152,6 +154,26 @@ static std::vector<std::string> words(const std::string &text) {
     return out;
 }
 void Bot::message(Id u, Id, const std::string &text, Id t) {
+    if (text.rfind("/ai_bonus", 0) == 0) {
+        if (!cfg_.admins.count(u)) throw InputError("Команда доступна только администратору.");
+        std::istringstream input(text);
+        std::string command, target, amount = "5", extra;
+        input >> command >> target;
+        if (command != "/ai_bonus" || target.empty()) throw InputError("/ai_bonus ID [количество], по умолчанию +5");
+        if (input >> amount) { if (input >> extra) throw InputError("/ai_bonus ID [количество]"); }
+        Id id;
+        try { size_t end; id = std::stoll(target, &end); if (end != target.size() || id <= 0) throw std::runtime_error("id"); }
+        catch (...) { throw InputError("Некорректный ID."); }
+        auto n = number(amount, 1, 100);
+        if (n != std::floor(n)) throw InputError("Количество должно быть целым.");
+        if (db_.rows("SELECT id FROM users WHERE id=?", {id}).empty()) throw InputError("Пользователь ещё не зарегистрирован.");
+        auto day = local_day(t, "Etc/UTC");
+        db_.write("INSERT INTO ai_bonus VALUES(?,?,?) ON CONFLICT(user,day) DO UPDATE SET amount=MIN(1000,amount+excluded.amount)", {id,day,static_cast<int>(n)});
+        auto bonus = db_.rows("SELECT amount FROM ai_bonus WHERE user=? AND day=?",{id,day})[0]["amount"].get<int>();
+        say(u, "✅ Лимит пользователя " + target + " на сегодня: " + std::to_string(cfg_.ai_daily_user + bonus) +
+            " запросов.\nБонус действует до 00:00 UTC (03:00 МСК). Общий лимит бота сохраняется.");
+        return;
+    }
     if (text.size() > 3500)
         throw InputError("Сообщение слишком длинное (максимум 3500 байт).");
     auto user = db_.rows("SELECT * FROM users WHERE id=?", {u})[0];
@@ -234,6 +256,8 @@ void Bot::message(Id u, Id, const std::string &text, Id t) {
     }
     if (text == "/ai off") {
         db_.write("UPDATE users SET ai_consent=0 WHERE id=?", {u});
+        db_.write("DELETE FROM sessions WHERE user=? AND state LIKE 'product_%'", {u});
+        db_.write("UPDATE product_jobs SET status='cancelled',payload='{}' WHERE user=? AND status='pending'", {u});
         db_.write("UPDATE drafts SET status='cancelled' WHERE user=? AND status='pending' AND "
                   "kind='meal'",
                   {u});
@@ -271,6 +295,7 @@ void Bot::message(Id u, Id, const std::string &text, Id t) {
         say(u, "Пороги сохранены; окно воды — час после указанного времени.");
         return;
     }
+    if ((text.empty() || text[0] != '/') && product_message(u, text, t)) return;
     if ((text.empty() || text[0] != '/') && ui_message(u, text, t))
         return;
     auto split = text.find(' ');

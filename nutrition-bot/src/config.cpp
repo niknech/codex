@@ -44,6 +44,12 @@ Config Config::load() {
     }
     if (c.allowed.empty() && !c.public_registration)
         throw std::runtime_error("Set BOT_ALLOWED_USER_IDS or BOT_PUBLIC_REGISTRATION=true");
+    std::istringstream admins(env("BOT_ADMIN_USER_IDS"));
+    while (std::getline(admins, id, ',')) {
+        if (!std::regex_match(id, std::regex("[1-9][0-9]{0,18}")))
+            throw std::runtime_error("Invalid admin ID");
+        c.admins.insert(std::stoll(id));
+    }
     c.token = secret("BOT_TOKEN_FILE", "telegram_token");
     if (!std::regex_match(c.token, std::regex("[0-9]+:[A-Za-z0-9_-]+")))
         throw std::runtime_error("Invalid Telegram token format");

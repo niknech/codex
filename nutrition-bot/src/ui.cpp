@@ -117,10 +117,10 @@ void Bot::screen(Id u, const std::string &state, Json p, Id t) {
                      {"☀️ Обед", "cat_lunch"},
                      {"🌙 Ужин", "cat_dinner"}}));
     } else if (state == "meal_method") {
-        // Exactly two choices, as requested. /cancel remains available everywhere.
+        // /cancel remains available for every input method.
         say(u, meal_label(p["category"]) + "\n\nКак добавим еду?",
             buttons({{cfg_.ai_enabled ? "🤖 С помощью AI" : "🤖 AI недоступен", prefix + "ai"},
-                     {"✍️ Вручную", prefix + "manual"}}));
+                     {"✍️ Вручную", prefix + "manual"}, {"📷 Штрихкод / этикетка", prefix + "barcode"}}));
     } else if (state == "meal_ai") {
         say(u,
             meal_label(p["category"]) +
@@ -328,6 +328,7 @@ void Bot::ui_callback(Id u, const std::string &action, Id t) {
         say(u, "✖️ Ввод отменён. Ничего не добавлено.", menu());
         return;
     }
+    if (product_callback(u, state, value, p, t)) return;
     if (state == "meal_category" &&
         (value == "cat_breakfast" || value == "cat_lunch" || value == "cat_dinner")) {
         p["category"] = value.substr(4);
@@ -335,6 +336,7 @@ void Bot::ui_callback(Id u, const std::string &action, Id t) {
         return;
     }
     if (state == "meal_method") {
+        if (value == "barcode") { product_screen(u, "product_code", p, t); return; }
         if (value == "ai") {
             if (cfg_.ai_enabled) {
                 screen(u, "meal_ai", p, t);
