@@ -25,6 +25,6 @@ class Telegram {
     void photo(Id chat, const std::string &path);
 };
 using AiTransport = std::function<Json(const Json &)>;
-Json ai_request(const std::string &model, const std::string &description);
+Json ai_request(const std::string &model, const std::string &description, bool web_search = false);
 Json ai_response(const Json &response);
 } // namespace nb

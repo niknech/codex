@@ -64,7 +64,8 @@ bool Bot::ai_one(Id t, const AiTransport &transport) {
     Json estimate;
     std::string failure;
     try {
-        estimate = ai_response(transport(ai_request(cfg_.model, d["description"])));
+        estimate =
+            ai_response(transport(ai_request(cfg_.model, d["description"], cfg_.ai_web_search)));
     } catch (const ApiError &e) {
         std::cerr << "AI request failed: API status " << e.status << '\n';
         failure = "AI недоступен или превышен лимит. Автоповтора платного запроса нет. Повторите "
