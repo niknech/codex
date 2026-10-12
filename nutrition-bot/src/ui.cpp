@@ -120,7 +120,7 @@ void Bot::screen(Id u, const std::string &state, Json p, Id t) {
         // /cancel remains available for every input method.
         say(u, meal_label(p["category"]) + "\n\nКак добавим еду?",
             buttons({{cfg_.ai_enabled ? "🤖 С помощью AI" : "🤖 AI недоступен", prefix + "ai"},
-                     {"✍️ Вручную", prefix + "manual"}, {"📷 Штрихкод / этикетка", prefix + "barcode"}}));
+                     {"✍️ Вручную", prefix + "manual"}, {"🔢 Штрихкод", prefix + "barcode"}}));
     } else if (state == "meal_ai") {
         say(u,
             meal_label(p["category"]) +

@@ -122,7 +122,7 @@ bool Bot::process_one(Id time) {
                         if (cb)
                             callback(user, envelope.value("data", ""), time);
                         else if (msg.contains("photo"))
-                            product_photo(user, msg["photo"], time);
+                            say(user, "Фото не распознаются. Введи цифры штрихкода или добавь еду вручную.");
                         else
                             message(user, msg["chat"]["id"], text, time);
                         db_.exec("RELEASE action");

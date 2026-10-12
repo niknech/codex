@@ -363,8 +363,7 @@ int main() {
             {"product_name","Тест"},{"product_quantity_unit","g"},{"product_quantity",200},
             {"nutriments",{{"energy-kcal_100g",500},{"proteins_100g",10},{"fat_100g",20},{"carbohydrates_100g",60}}}}}}; };
         auto no_ai=[](const Json &) -> Json { throw std::runtime_error("unexpected AI"); };
-        auto no_photo=[](const std::string &) { return std::string(); };
-        bb.product_one(b.t,no_ai,lookup,no_photo);
+        bb.product_one(b.t,no_ai,lookup);
         check(b.state()=="product_review","OFF lookup without AI");
         auto accept=b.action("accept"); b.click(accept,22);
         check(b.db.rows("SELECT * FROM products").empty(),"foreign product accept rejected");
@@ -386,56 +385,44 @@ int main() {
         w.send("🍽 Добавить еду"); w.click(w.action("cat_dinner")); w.click(w.action("barcode"));
         w.send("3017620422003");
         Bot wb(w.db,w.cfg);
-        wb.product_one(w.t,no_ai,[](const std::string &){return Json::object();},no_photo);
+        wb.product_one(w.t,no_ai,[](const std::string &){return Json::object();});
         check(w.db.rows("SELECT * FROM product_jobs WHERE paid=1").size()==1,"OFF miss reserves AI fallback");
         auto wrap=[](const Json &p) { return Json{{"status","completed"},{"output",Json::array({
             {{"type","message"},{"content",Json::array({{{"type","output_text"},{"text",p.dump()}}})}}})}}; };
         wb.product_one(w.t,[&](const Json &request){
             check(request["tools"][0]["type"]=="web_search","barcode web request");
             return wrap({{"found",false}});
-        },lookup,no_photo);
-        check(w.state()=="product_missing","unmatched barcode asks label");
+        },lookup);
+        check(w.state()=="product_missing","unmatched barcode offers manual input");
         auto photo=[&] { w.ingest({{"update_id",++w.seq},{"message",{{"from",{{"id",11}}},
             {"chat",{{"id",11},{"type","private"}}},{"photo",Json::array({{{"file_id","fixture-photo"}}})}}}}); };
+        auto count=w.db.rows("SELECT * FROM product_jobs").size();
         photo();
-        check(w.state()=="product_missing","photo shares exhausted AI quota");
-        w.send("/ai_bonus 11"); photo();
-        check(w.state()=="product_wait","bonus enables photo job");
-        product["found"]=true;
-        wb.product_one(w.t,[&](const Json &request){
-            check(!request.contains("tools") && request["input"][0]["content"][1]["type"]=="input_image","label uses image without web");
-            return wrap(product);
-        },lookup,[](const std::string &){return std::string("data:image/jpeg;base64,fixture");});
-        check(w.state()=="product_review","label returns review");
-        check(w.db.rows("SELECT * FROM products").empty(),"label not cached before confirmation");
-        photo(); w.send("/ai off");
+        check(w.state()=="product_missing" && w.db.rows("SELECT * FROM product_jobs").size()==count,
+              "photo creates no jobs and preserves flow");
+        w.click(w.flow("web"));
+        check(w.db.rows("SELECT * FROM product_jobs").size()==count,"quota enforced for retry");
+        w.send("/ai_bonus 11"); w.click(w.flow("web"));
+        check(w.state()=="product_wait","bonus enables web retry");
+        w.send("/ai off");
         bool sent=false;
-        wb.product_one(w.t,[&](const Json &){sent=true; return wrap(product);},lookup,no_photo);
-        check(!sent && w.state().empty(),"revoked consent cancels photo job");
+        wb.product_one(w.t,[&](const Json &){sent=true; return wrap(product);},lookup);
+        check(!sent && w.state().empty(),"revoked consent cancels web job");
         w.cfg.ai_daily_global=2;
         w.send("🍽 Добавить еду"); w.click(w.action("cat_lunch")); w.click(w.action("ai")); w.send("рис");
         check(w.db.rows("SELECT * FROM jobs").empty(),"bonus cannot bypass global quota");
-        auto unverified=product; unverified["url"]="https://invented.invalid";
+        auto unverified=product; unverified["found"]=true; unverified["url"]="https://invented.invalid";
         check(product_response(wrap(unverified),"web","3017620422003").is_null(),"web product needs actual source");
         bool checksum=false; try { barcode("3017620422004"); } catch(const InputError &) {checksum=true;}
         check(checksum,"invalid barcode checksum rejected");
-        Fixture scan;
-        scan.cfg.ai_enabled=true; scan.cfg.model="gpt-6-luna";
-        scan.send("🍽 Добавить еду"); scan.click(scan.action("cat_breakfast")); scan.click(scan.action("barcode"));
-        scan.ingest({{"update_id",++scan.seq},{"message",{{"from",{{"id",11}}},
-            {"chat",{{"id",11},{"type","private"}}},{"photo",Json::array({{{"file_id","fixture"}}})}}}});
-        Bot sb(scan.db,scan.cfg);
-        sb.product_one(scan.t,[&](const Json &){return wrap({{"found",true},{"barcode","3017620422003"}});},lookup,no_photo);
-        check(scan.state()=="product_scan_check","photo code requires confirmation");
-        scan.click(scan.action("lookup"));
-        sb.product_one(scan.t,no_ai,[](const std::string &){return Json::object();},no_photo);
-        check(scan.state()=="product_missing" && scan.db.rows("SELECT * FROM product_jobs WHERE paid=1").size()==1,
-              "search disabled does not enqueue web fallback");
-        scan.cfg.ai_daily_user=1;
-        scan.db.write("INSERT INTO ai_bonus VALUES(?,?,5)",{11,shift_day(local_day(scan.t,"Etc/UTC"),-1)});
-        scan.ingest({{"update_id",++scan.seq},{"message",{{"from",{{"id",11}}},
-            {"chat",{{"id",11},{"type","private"}}},{"photo",Json::array({{{"file_id","fixture"}}})}}}});
-        check(scan.state()=="product_missing","yesterday bonus does not extend today quota");
+        Fixture legacy;
+        legacy.cfg.ai_enabled=true;
+        legacy.db.write("INSERT INTO product_jobs(user,flow,kind,payload,day,paid) VALUES(11,1,'label','{}',?,1)",
+            {local_day(legacy.t,"Etc/UTC")});
+        Bot lb(legacy.db,legacy.cfg);
+        lb.product_one(legacy.t,no_ai,lookup);
+        check(legacy.db.rows("SELECT status,payload FROM product_jobs")[0]==Json({{"status","cancelled"},{"payload","{}"}}),
+              "legacy photo jobs cancelled without API access");
         // Save one synthetic preview, without user data, when requested by the developer.
         if (auto path = std::getenv("BOT_UI_PREVIEW")) {
             std::ofstream out(path);

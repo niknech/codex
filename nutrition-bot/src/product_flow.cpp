@@ -10,18 +10,9 @@ void Bot::product_screen(Id u, const std::string &state, Json p, Id t) {
     std::vector<std::pair<std::string, std::string>> actions;
     std::string text;
     if (state == "product_code")
-        text = "📷 Найдём продукт\n\nВведи цифры штрихкода или отправь фото кода.\nСначала проверю "
-               "свою базу и Open Food Facts. Если данных нет и поиск включён — отправлю код в "
-               "OpenAI (один AI-запрос). Фото тоже отправится в OpenAI и потратит запрос. /ai off "
-               "— отозвать согласие.";
-    else if (state == "product_scan_check") {
-        text = "🔢 На фото прочитал: " + p["code"].get<std::string>() +
-               "\nПроверь цифры перед поиском.";
-        actions.emplace_back("✅ Код верный", prefix + "lookup");
-    } else if (state == "product_missing") {
-        text = "🔎 Полной карточки в базе нет\n\nПришли фото таблицы КБЖУ на упаковке (на 100 "
-               "г/мл). Фото отправится в OpenAI и потратит один запрос.\nИли выбери поиск по "
-               "точному штрихкоду.";
+        text = "🔢 Найдём продукт\n\nВведи цифры штрихкода. Сначала проверю свою базу и Open Food Facts. Если данных нет и поиск включён — отправлю код в OpenAI (один AI-запрос). /ai off — отозвать согласие.";
+    else if (state == "product_missing") {
+        text = "🔎 Полной карточки нет\n\nВнеси КБЖУ вручную с упаковки или повтори поиск по точному штрихкоду.";
         if (cfg_.ai_enabled && cfg_.ai_web_search)
             actions.emplace_back("🌐 Найти через AI", prefix + "web");
     } else if (state == "product_review") {
@@ -32,7 +23,7 @@ void Bot::product_screen(Id u, const std::string &state, Json p, Id t) {
                quantity(product["fat"]) + " г жира\n🍞 " + quantity(product["carbs"]) +
                " г углеводов\n\nИсточник: " + product.value("source", "этикетка") + "\n" +
                product.value("url", "") +
-               "\n\nСверь с упаковкой. Можно прислать более чёткое фото этикетки.";
+               "\n\nСверь данные с упаковкой.";
         actions.emplace_back("✅ Верно, выбрать порцию", prefix + "accept");
     } else if (state == "product_amount") {
         text = "⚖️ Сколько съедено?\nВведи количество в " +
@@ -72,7 +63,7 @@ bool Bot::product_message(Id u, const std::string &text, Id t) {
     if (state.rfind("product_", 0) != 0)
         return false;
     auto p = Json::parse(rows[0]["payload"].get<std::string>());
-    if (state == "product_code" || state == "product_scan_check") {
+    if (state == "product_code") {
         p["code"] = barcode(text);
         auto cache =
             db_.rows("SELECT data FROM products WHERE user=? AND barcode=?", {u, p["code"]});
@@ -99,10 +90,6 @@ bool Bot::product_callback(Id u, const std::string &state, const std::string &va
     }
     if (state.rfind("product_", 0) != 0)
         return false;
-    if (state == "product_scan_check" && value == "lookup") {
-        product_message(u, p["code"], t);
-        return true;
-    }
     if (state == "product_missing" && value == "web") {
         product_queue(u, "web", p, t);
         return true;
@@ -122,22 +109,8 @@ bool Bot::product_callback(Id u, const std::string &state, const std::string &va
     }
     throw InputError("Используй кнопки последней карточки.");
 }
-void Bot::product_photo(Id u, const Json &photos, Id t) {
-    auto rows = db_.rows("SELECT * FROM sessions WHERE user=? AND expires>=?", {u, t});
-    if (rows.empty())
-        throw InputError("Сначала выбери: Еда → приём пищи → Штрихкод / этикетка.");
-    auto state = rows[0]["state"].get<std::string>();
-    if (state != "product_code" && state != "product_missing" && state != "product_review")
-        throw InputError("Фото сейчас не ожидается.");
-    if (!photos.is_array() || photos.empty())
-        throw InputError("Пришли фото, не файл.");
-    auto p = Json::parse(rows[0]["payload"].get<std::string>());
-    p["file"] = photos.back().at("file_id");
-    product_queue(u, state == "product_code" ? "scan" : "label", p, t);
-}
 bool Bot::product_one(Id t, const AiTransport &ai,
-                      const std::function<Json(const std::string &)> &lookup,
-                      const std::function<std::string(const std::string &)> &photo) {
+                      const std::function<Json(const std::string &)> &lookup) {
     Json job, p;
     {
         Transaction tx(db_);
@@ -153,7 +126,7 @@ bool Bot::product_one(Id t, const AiTransport &ai,
             "SELECT payload FROM sessions WHERE user=? AND state='product_wait' AND expires>=?",
             {job["user"], t});
         bool valid =
-            !s.empty() && Json::parse(s[0]["payload"].get<std::string>())["flow"] == job["flow"];
+            (job["kind"] == "lookup" || job["kind"] == "web") && !s.empty() && Json::parse(s[0]["payload"].get<std::string>())["flow"] == job["flow"];
         if (job["paid"] == 1)
             valid = valid && cfg_.ai_enabled && (job["kind"] != "web" || cfg_.ai_web_search) &&
                     db_.rows("SELECT ai_consent FROM users WHERE id=?",
@@ -174,7 +147,7 @@ bool Bot::product_one(Id t, const AiTransport &ai,
             result = off_product(lookup(code), code);
         else
             result = product_response(
-                ai(product_request(cfg_.model, kind, code, kind == "web" ? "" : photo(p["file"]))),
+                ai(product_request(cfg_.model, kind, code)),
                 kind, code);
     } catch (const std::exception &) {
         failure = "Не удалось проверить продукт. Автоповтора платного запроса нет.";
@@ -199,11 +172,7 @@ bool Bot::product_one(Id t, const AiTransport &ai,
                     product_screen(job["user"], "product_missing", p, t);
                 }
             } else
-                product_screen(job["user"], kind == "scan" ? "product_code" : "product_missing", p,
-                               t);
-        } else if (kind == "scan") {
-            p["code"] = result["barcode"];
-            product_screen(job["user"], "product_scan_check", p, t);
+                product_screen(job["user"], "product_missing", p, t);
         } else {
             p["product"] = result;
             product_screen(job["user"], "product_review", p, t);
