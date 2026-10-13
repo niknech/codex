@@ -2,6 +2,8 @@
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
+#include <locale>
 #include <random>
 #ifdef _WIN32
 #include <process.h>
@@ -39,6 +41,7 @@ std::string make_chart(Database &db, Id user, const std::string &start, const st
                                "deleted=0 AND day BETWEEN ? AND ? ORDER BY day",
                                {user, start, end});
         std::ofstream out(data);
+        out.imbue(std::locale::classic());
         for (auto &day : dates) {
             auto it = std::find_if(weights.begin(), weights.end(),
                                    [&](const Json &w) { return w["day"] == day; });
@@ -51,14 +54,80 @@ std::string make_chart(Database &db, Id user, const std::string &start, const st
         }
         out.close();
         std::ofstream gp(script);
-        gp << "set terminal pngcairo size 1000,500 font 'DejaVu Sans,12'\nset output '" << output
-           << "'\nset xdata time\nset timefmt '%Y-%m-%d'\nset format x '%d.%m'\nset xlabel "
-              "'Date'\nset ylabel 'kg'\nset grid\nset key off\nset xrange ['"
+        gp.imbue(std::locale::classic());
+        gp << "set encoding utf8\nset terminal pngcairo size 1200,720 enhanced "
+              "font 'DejaVu Sans,14' background rgb '#F3F7FB'\nset output '"
+           << output
+           << "'\nset xdata time\nset timefmt '%Y-%m-%d'\nset format x '%d.%m'\n"
+              "set key off\nset border 0\nset tics nomirror scale 0 textcolor rgb '#64748B'\n"
+              "set grid ytics lc rgb '#DBE5EF' lw 1\nset format y '%.1f'\n"
+              "set ylabel 'Вес, кг' textcolor rgb '#64748B' offset 1,0\n"
+              "set lmargin at screen 0.10\nset rmargin at screen 0.95\n"
+              "set bmargin at screen 0.14\nset tmargin at screen 0.65\n"
+              "set object 1 rect from graph 0,0 to graph 1,1 behind "
+              "fillcolor rgb '#FFFFFF' fillstyle solid 1.0 noborder\n"
+              "set label 1 'ДИНАМИКА ВЕСА' at screen 0.10,0.93 front "
+              "font 'DejaVu Sans Bold,15' textcolor rgb '#0F766E'\n"
+              "set label 2 '"
+           << display_day(start) << " — " << display_day(end)
+           << "' at screen 0.10,0.88 front textcolor rgb '#64748B'\n"
+              "set label 3 'Точки — твои замеры. Пропуски не заполняются.' at screen 0.10,0.05 "
+              "front font 'DejaVu Sans,11' textcolor rgb '#64748B'\nset xrange ['"
            << shift_day(start, -1) << "':'" << shift_day(end, 1) << "']\n";
-        if (weights.empty())
-            gp << "set yrange [0:1]\nplot 0 with lines\n";
-        else
-            gp << "plot '" << data << "' using 1:2 with linespoints lw 2 pt 7\n";
+        // Explicit ticks keep long periods and single-day views readable on a phone.
+        gp << "set xtics (";
+        auto step = std::max<size_t>(1, (dates.size() - 1 + 5) / 6);
+        bool first = true;
+        for (size_t i = 0; i < dates.size(); ++i) {
+            if (i % step != 0 && i + 1 != dates.size())
+                continue;
+            if (i + 1 != dates.size() && i > 0 && dates.size() - 1 - i < step / 2)
+                continue;
+            gp << (first ? "" : ",") << "'" << display_day(dates[i]).substr(0, 5) << "' '"
+               << dates[i] << "'";
+            first = false;
+        }
+        gp << ")\n";
+        if (weights.empty()) {
+            gp << "set yrange [0:1]\nunset ytics\nunset ylabel\n"
+                  "set label 4 'Здесь появится твой график' at graph 0.5,0.55 center "
+                  "font 'DejaVu Sans Bold,20' textcolor rgb '#334155'\n"
+                  "set label 5 'Добавь первое измерение веса через меню' at graph 0.5,0.40 "
+                  "center textcolor rgb '#64748B'\nplot 2 with points lc rgb '#FFFFFF'\n";
+        } else {
+            double low = weights[0]["amount"].get<double>() / 1000, high = low;
+            for (const auto &w : weights) {
+                auto kg = w["amount"].get<double>() / 1000;
+                low = std::min(low, kg);
+                high = std::max(high, kg);
+            }
+            auto pad = std::max(0.5, (high - low) * 0.25);
+            auto last = weights.back()["amount"].get<double>() / 1000;
+            auto delta = last - weights.front()["amount"].get<double>() / 1000;
+            gp << "set yrange [" << low - pad << ":" << high + pad
+               << "]\n"
+                  "set label 4 '"
+               << quantity(last)
+               << " кг' at screen 0.10,0.77 "
+                  "font 'DejaVu Sans Bold,30' textcolor rgb '#0F172A'\n"
+                  "set label 5 'Последний замер · "
+               << display_day(weights.back()["day"])
+               << "' at screen 0.10,0.71 font 'DejaVu Sans,11' textcolor rgb '#64748B'\n"
+                  "set label 6 '"
+               << (weights.size() == 1 ? "Первый замер за период"
+                                       : "Изменение: " + std::string(delta > 0 ? "+" : "") +
+                                             quantity(delta) + " кг")
+               << "' at screen 0.59,0.78 font 'DejaVu Sans Bold,17' textcolor rgb '#0F766E'\n"
+                  "set label 7 'Замеров: "
+               << weights.size()
+               << "' at screen 0.59,0.72 textcolor rgb '#64748B'\n"
+                  "plot '"
+               << data
+               << "' using 1:2 with lines lw 3 lc rgb '#14B8A6', '' "
+                  "using 1:2 with points pt 7 ps 1.2 lc rgb '#0F766E', '-' "
+                  "using 1:2 with points pt 7 ps 1.8 lc rgb '#F59E0B'\n"
+               << weights.back()["day"].get<std::string>() << " " << last << "\ne\n";
+        }
         gp.close();
 #ifdef _WIN32
         auto rc = _spawnlp(_P_WAIT, "gnuplot", "gnuplot", script.c_str(), nullptr);

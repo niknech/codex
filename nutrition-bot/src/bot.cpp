@@ -61,14 +61,7 @@ void Bot::offer(Id user, Id id) {
     auto suffix = std::to_string(id) + ":" + std::to_string(d["version"].get<Id>());
     std::string text = "📅 " + display_day(d["day"]) + "\n\n";
     if (d["kind"] == "weight") {
-        text = "⚖️ Новое измерение\n\n" + quantity(e["amount"].get<double>() / 1000) + " кг\n📅 " + display_day(d["day"]) + "\n";
-        auto last = db_.rows("SELECT day,amount FROM entries WHERE user=? AND kind='weight' AND deleted=0 AND day<? ORDER BY day DESC LIMIT 1",{user,d["day"]});
-        if (!last.empty()) {
-            auto delta=(e["amount"].get<double>()-last[0]["amount"].get<double>())/1000;
-            text += "\nРанее: " + quantity(last[0]["amount"].get<double>()/1000) + " кг · " + display_day(last[0]["day"]) +
-                "\nИзменение: " + (delta>0?"+":"") + quantity(delta) + " кг\n";
-        }
-        text += "\n";
+        text += "⚖️ Вес: " + quantity(e["amount"].get<double>() / 1000) + " кг\n\n";
         auto previous = totals(db_, user, d["day"])["weight"];
         text += previous.is_null()
                     ? "Записать измерение?"
@@ -129,7 +122,7 @@ bool Bot::process_one(Id time) {
                         if (cb)
                             callback(user, envelope.value("data", ""), time);
                         else if (msg.contains("photo"))
-                            say(user, "Фото не распознаются. Введи цифры штрихкода или добавь еду вручную.");
+                            product_photo(user, msg["photo"], time);
                         else
                             message(user, msg["chat"]["id"], text, time);
                         db_.exec("RELEASE action");

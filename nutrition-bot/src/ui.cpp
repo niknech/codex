@@ -120,7 +120,7 @@ void Bot::screen(Id u, const std::string &state, Json p, Id t) {
         // /cancel remains available for every input method.
         say(u, meal_label(p["category"]) + "\n\nКак добавим еду?",
             buttons({{cfg_.ai_enabled ? "🤖 С помощью AI" : "🤖 AI недоступен", prefix + "ai"},
-                     {"✍️ Вручную", prefix + "manual"}, {"🔢 Штрихкод", prefix + "barcode"}}));
+                     {"✍️ Вручную", prefix + "manual"}, {"📷 Штрихкод / этикетка", prefix + "barcode"}}));
     } else if (state == "meal_ai") {
         say(u,
             meal_label(p["category"]) +
@@ -165,16 +165,10 @@ void Bot::screen(Id u, const std::string &state, Json p, Id t) {
                 "запятой не нужны.",
             choices({{"↩️ По одному числу", "back"}}));
     } else if (state == "weight_value") {
-        std::string text="⚖️ Какой вес сегодня?\n\nНапиши число в килограммах — например, 82,4.\n📅 Дату выберем следующим шагом.";
-        std::vector<std::pair<std::string,std::string>> actions;
-        auto last=db_.rows("SELECT amount,day FROM entries WHERE user=? AND kind='weight' AND deleted=0 ORDER BY day DESC LIMIT 1",{u});
-        if(!last.empty()) {
-            double kg=last[0]["amount"].get<double>()/1000;
-            text+="\n\nПоследняя запись: "+quantity(kg)+" кг\n"+display_day(last[0]["day"]);
-            for(double value:{kg-0.1,kg,kg+0.1}) if(value>=1 && value<=500)
-                actions.emplace_back(quantity(value)+" кг","weightpick_"+std::to_string(value));
-        }
-        say(u,text,choices(actions));
+        say(u,
+            "⚖️ Запишем вес\n\nВведи только вес в килограммах.\nНапример: 82,4\n\n📅 Дату выберем "
+            "следующим шагом.",
+            choices({}));
     } else if (state == "weight_date") {
         auto today = local_day(t, db_.rows("SELECT tz FROM users WHERE id=?", {u})[0]["tz"]);
         say(u,
@@ -336,7 +330,6 @@ void Bot::ui_callback(Id u, const std::string &action, Id t) {
     }
     if (product_callback(u, state, value, p, t)) return;
     if (preference_callback(u, state, value, p, t)) return;
-    if(state=="weight_value" && value.rfind("weightpick_",0)==0) { ui_message(u,value.substr(11),t); return; }
     if (state == "meal_category" &&
         (value == "cat_breakfast" || value == "cat_lunch" || value == "cat_dinner")) {
         p["category"] = value.substr(4);

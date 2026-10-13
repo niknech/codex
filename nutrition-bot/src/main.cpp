@@ -81,7 +81,7 @@ int main(int argc, char **argv) {
                                 return post(cfg.ai_url, request, cfg.key, 25);
                             }) && !bot.product_one(now(), [&](const Json &request) {
                                 return post(cfg.ai_url,request,cfg.key,35);
-                            }, lookup_product))
+                            }, lookup_product, [&](const std::string &id) { return tg.photo_data(id); }))
                             pause(1);
                     } else {
                         bot.deliver_one(tg, now());

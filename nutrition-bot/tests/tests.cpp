@@ -214,14 +214,31 @@ int main() {
             db.write("DELETE FROM notices WHERE user=11");
             bot.reminders(t);
             check(db.rows("SELECT * FROM notices WHERE user=11").empty(), "disabled reminders");
-#ifndef _WIN32
+#ifdef _WIN32
+        if (std::getenv("BOT_TEST_CHARTS")) {
+#else
+        {
+#endif
             for (Id chart_user : {Id{0}, Id{11}}) {
                 auto png = make_chart(db, chart_user, shift_day(day, -6), day);
                 check(std::filesystem::file_size(png) > 100,
                       "valid PNG chart (empty/single point)");
                 std::filesystem::remove_all(std::filesystem::path(png).parent_path());
             }
-#endif
+            if (auto preview = std::getenv("BOT_CHART_PREVIEW")) {
+                Database sample(":memory:");
+                sample.migrate();
+                sample.write("INSERT INTO users(id,chat,tz) VALUES(1,1,'Etc/UTC')");
+                for (int i = 0; i < 14; ++i) {
+                    if (i == 8) continue;
+                    sample.write("INSERT INTO entries(user,kind,day,utc,tz,amount) VALUES(1,'weight',?,0,'Etc/UTC',?)",
+                                 {shift_day("2026-10-01",i), 82500-i*90+(i%3)*120});
+                }
+                auto png = make_chart(sample,1,"2026-10-01","2026-10-14");
+                std::filesystem::copy_file(png, preview, std::filesystem::copy_options::overwrite_existing);
+                std::filesystem::remove_all(std::filesystem::path(png).parent_path());
+            }
+        }
             auto before = totals(db, 11, day);
             db.backup((root / "backup.sqlite3").string());
             Database restored((root / "backup.sqlite3").string());

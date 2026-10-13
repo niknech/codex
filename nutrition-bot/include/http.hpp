@@ -24,6 +24,7 @@ class Telegram {
         : base_("https://api.telegram.org/bot" + token + "/") {}
     Json call(const std::string &method, const Json &payload);
     void photo(Id chat, const std::string &path);
+    std::string photo_data(const std::string &file_id);
 };
 using AiTransport = std::function<Json(const Json &)>;
 Json ai_request(const std::string &model, const std::string &description, bool web_search = false);

@@ -25,6 +25,7 @@ class Bot {
     void product_screen(Id user, const std::string &state, Json payload, Id time);
     bool product_message(Id user, const std::string &text, Id time);
     bool product_callback(Id user, const std::string &state, const std::string &action, Json payload, Id time);
+    void product_photo(Id user, const Json &photos, Id time);
     void product_queue(Id user, const std::string &kind, Json payload, Id time);
 
   public:
@@ -34,7 +35,8 @@ class Bot {
     bool process_one(Id time);
     void reminders(Id time);
     bool ai_one(Id time, const AiTransport &transport);
-    bool product_one(Id time, const AiTransport &ai, const std::function<Json(const std::string &)> &lookup);
+    bool product_one(Id time, const AiTransport &ai, const std::function<Json(const std::string &)> &lookup,
+                     const std::function<std::string(const std::string &)> &photo);
     void deliver_one(Telegram &telegram, Id time);
 };
 Json menu();
