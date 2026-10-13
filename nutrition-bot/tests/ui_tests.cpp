@@ -214,6 +214,14 @@ int main() {
               "replacement shows prior weight");
         check(totals(f.db, 11, f.day)["weight"] == 83000,
               "replacement still requires confirmation");
+        f.send("⚖️ Записать вес");
+        f.click(f.action("weightpick_83.100000"));
+        check(f.state() == "weight_date", "quick weight goes to date selection");
+        f.click(f.action("date_" + f.day));
+        check(Json::parse(f.db.rows("SELECT estimate FROM drafts WHERE id=?", {f.draft_id()})[0]["estimate"].get<std::string>())["amount"] == 83100,
+              "quick weight keeps gram precision");
+        check(f.last()["text"].get<std::string>().find("+0,7") != std::string::npos,
+              "weight compares with earlier day, not same-day replacement");
         f.send("🍽 Добавить еду");
         stale = f.action("cat_dinner");
         f.send("/cancel");
@@ -385,7 +393,10 @@ int main() {
         w.send("🍽 Добавить еду"); w.click(w.action("cat_dinner")); w.click(w.action("barcode"));
         w.send("3017620422003");
         Bot wb(w.db,w.cfg);
+        auto before_fallback=w.db.rows("SELECT COUNT(*) AS n FROM outbox WHERE method='sendMessage'")[0]["n"];
         wb.product_one(w.t,no_ai,[](const std::string &){return Json::object();});
+        check(w.db.rows("SELECT COUNT(*) AS n FROM outbox WHERE method='sendMessage'")[0]["n"]==before_fallback,
+              "OFF to AI fallback sends no duplicate progress message");
         check(w.db.rows("SELECT * FROM product_jobs WHERE paid=1").size()==1,"OFF miss reserves AI fallback");
         auto wrap=[](const Json &p) { return Json{{"status","completed"},{"output",Json::array({
             {{"type","message"},{"content",Json::array({{{"type","output_text"},{"text",p.dump()}}})}}})}}; };
@@ -423,6 +434,33 @@ int main() {
         lb.product_one(legacy.t,no_ai,lookup);
         check(legacy.db.rows("SELECT status,payload FROM product_jobs")[0]==Json({{"status","cancelled"},{"payload","{}"}}),
               "legacy photo jobs cancelled without API access");
+        Fixture settings;
+        settings.send("⚙️ Настройки");
+        check(settings.last()["text"].get<std::string>().find("/timezone")==std::string::npos,"settings without command instructions");
+        auto reminders=settings.action("reminders");
+        settings.click(reminders,22);
+        check(settings.db.rows("SELECT reminders FROM users WHERE id=22")[0]["reminders"]==0,"foreign settings button rejected");
+        settings.click(reminders);
+        auto enable=settings.action("rem_on"); settings.click(enable);
+        check(settings.db.rows("SELECT reminders FROM users WHERE id=11")[0]["reminders"]==1,"reminders enabled by button");
+        settings.click(settings.action("rule_0"));
+        settings.click(settings.action("plus"));
+        check(settings.db.rows("SELECT water_hour1 FROM users WHERE id=11")[0]["water_hour1"]==13,"rule edit needs confirmation");
+        settings.click(settings.action("rule_save"));
+        check(settings.db.rows("SELECT water_hour1 FROM users WHERE id=11")[0]["water_hour1"]==14,"rule saved by button");
+        settings.click(settings.action("rem_off")); settings.click(enable);
+        check(settings.db.rows("SELECT reminders FROM users WHERE id=11")[0]["reminders"]==0,"stale settings cannot re-enable reminder");
+        settings.send("⚙️ Настройки"); settings.click(settings.action("zones")); settings.click(settings.action("zone_4"));
+        check(settings.db.rows("SELECT tz FROM users WHERE id=11")[0]["tz"]=="Asia/Omsk","timezone selected by button");
+        settings.send("🎯 Мои нормы");
+        for(auto pick:{"goal_2000","goal_100","goal_50","goal_150","goal_2000"}) settings.click(settings.action(pick));
+        check(settings.db.rows("SELECT * FROM goals").empty(),"goals wait for confirmation");
+        settings.click(settings.action("goal_save"));
+        check(settings.db.rows("SELECT kcal,water FROM goals")[0]==Json({{"kcal",2000},{"water",2000}}),"button-only goals saved");
+        settings.send("💧 Добавить воду"); settings.click(settings.action("nav:cancel"));
+        check(settings.state().empty(),"water cancellation button");
+        settings.send("⚖️ Записать вес"); settings.send("✖️ Отмена");
+        check(settings.state().empty(),"persistent cancel button");
         // Save one synthetic preview, without user data, when requested by the developer.
         if (auto path = std::getenv("BOT_UI_PREVIEW")) {
             std::ofstream out(path);

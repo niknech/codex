@@ -16,6 +16,9 @@ class Bot {
     void check_ai_limit(Id user, Id time);
     void period(Id user, const std::string &start, const std::string &end, int page, bool chart);
     void screen(Id user, const std::string &state, Json payload, Id time);
+    void preferences(Id user, const std::string &state, Json payload, Id time);
+    bool preference_message(Id user, const std::string &text, Id time);
+    bool preference_callback(Id user, const std::string &state, const std::string &action, Json payload, Id time);
     bool ui_message(Id user, const std::string &text, Id time);
     void ui_callback(Id user, const std::string &action, Id time);
     void finish_meal(Id user, Json payload, Id time);

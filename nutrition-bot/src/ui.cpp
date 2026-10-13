@@ -126,7 +126,7 @@ void Bot::screen(Id u, const std::string &state, Json p, Id t) {
             meal_label(p["category"]) +
                 " · оценка AI\n\n🍽 Опиши еду и размер порции.\nНапример: 2 яйца, 100 г варёного "
                 "риса и чай без сахара.\n\nAI оценит калории, белки, жиры и углеводы. Результат "
-                "можно исправить перед записью.\nОписание отправится в OpenAI; /ai off — "
+                "можно исправить перед записью.\nОписание отправится в OpenAI. В настройках можно "
                 "отключить." +
                 (cfg_.ai_web_search
                      ? std::string(
@@ -165,10 +165,16 @@ void Bot::screen(Id u, const std::string &state, Json p, Id t) {
                 "запятой не нужны.",
             choices({{"↩️ По одному числу", "back"}}));
     } else if (state == "weight_value") {
-        say(u,
-            "⚖️ Запишем вес\n\nВведи только вес в килограммах.\nНапример: 82,4\n\n📅 Дату выберем "
-            "следующим шагом.",
-            choices({}));
+        std::string text="⚖️ Какой вес сегодня?\n\nНапиши число в килограммах — например, 82,4.\n📅 Дату выберем следующим шагом.";
+        std::vector<std::pair<std::string,std::string>> actions;
+        auto last=db_.rows("SELECT amount,day FROM entries WHERE user=? AND kind='weight' AND deleted=0 ORDER BY day DESC LIMIT 1",{u});
+        if(!last.empty()) {
+            double kg=last[0]["amount"].get<double>()/1000;
+            text+="\n\nПоследняя запись: "+quantity(kg)+" кг\n"+display_day(last[0]["day"]);
+            for(double value:{kg-0.1,kg,kg+0.1}) if(value>=1 && value<=500)
+                actions.emplace_back(quantity(value)+" кг","weightpick_"+std::to_string(value));
+        }
+        say(u,text,choices(actions));
     } else if (state == "weight_date") {
         auto today = local_day(t, db_.rows("SELECT tz FROM users WHERE id=?", {u})[0]["tz"]);
         say(u,
@@ -273,7 +279,7 @@ bool Bot::ui_message(Id u, const std::string &text, Id t) {
         p["amount"] = static_cast<int>(std::round(number(text, 1, 500) * 1000));
         screen(u, "weight_date", p, t);
     } else
-        say(u, "👆 Выбери вариант кнопкой под последним сообщением.\n/cancel — отмена.");
+        say(u, "👆 Выбери вариант кнопкой под последним сообщением. Если передумал — нажми «Отмена».");
     return true;
 }
 void Bot::ui_callback(Id u, const std::string &action, Id t) {
@@ -302,7 +308,7 @@ void Bot::ui_callback(Id u, const std::string &action, Id t) {
         if (state == "meal_edit_items" && value.rfind("item_", 0) == 0) {
             auto index = number(value.substr(5), 0, p["estimate"]["items"].size() - 1);
             if (std::floor(index) != index)
-                throw InputError("Неверная кнопка.");
+                throw InputError("👆 Эта кнопка уже не подходит. Выбери действие в меню.");
             p["item"] = static_cast<int>(index);
             screen(u, "meal_edit_fields", p, t);
             return;
@@ -310,7 +316,7 @@ void Bot::ui_callback(Id u, const std::string &action, Id t) {
         if (state == "meal_edit_fields" && value.rfind("field_", 0) == 0) {
             auto field = number(value.substr(6), 0, 3);
             if (std::floor(field) != field)
-                throw InputError("Неверная кнопка.");
+                throw InputError("👆 Эта кнопка уже не подходит. Выбери действие в меню.");
             p["field"] = static_cast<int>(field);
             screen(u, "meal_edit_value", p, t);
             return;
@@ -329,6 +335,8 @@ void Bot::ui_callback(Id u, const std::string &action, Id t) {
         return;
     }
     if (product_callback(u, state, value, p, t)) return;
+    if (preference_callback(u, state, value, p, t)) return;
+    if(state=="weight_value" && value.rfind("weightpick_",0)==0) { ui_message(u,value.substr(11),t); return; }
     if (state == "meal_category" &&
         (value == "cat_breakfast" || value == "cat_lunch" || value == "cat_dinner")) {
         p["category"] = value.substr(4);

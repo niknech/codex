@@ -23,7 +23,7 @@ int main() {
     try {
         init_timezones();
         const auto keyboard = Json::parse(menu().dump()).at("keyboard");
-        check(keyboard.is_array() && keyboard.size() == 4, "Telegram keyboard is array of rows");
+        check(keyboard.is_array() && keyboard.size() == 5, "Telegram keyboard is array of rows");
         for (const auto &row : keyboard) {
             check(row.is_array() && row.size() == 2, "Telegram keyboard row is array");
             for (const auto &button : row)

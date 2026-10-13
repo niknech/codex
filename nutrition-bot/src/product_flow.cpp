@@ -10,7 +10,7 @@ void Bot::product_screen(Id u, const std::string &state, Json p, Id t) {
     std::vector<std::pair<std::string, std::string>> actions;
     std::string text;
     if (state == "product_code")
-        text = "🔢 Найдём продукт\n\nВведи цифры штрихкода. Сначала проверю свою базу и Open Food Facts. Если данных нет и поиск включён — отправлю код в OpenAI (один AI-запрос). /ai off — отозвать согласие.";
+        text = "🔢 Найдём продукт\n\nВведи цифры штрихкода. Сначала проверю свою базу и Open Food Facts. Если данных нет и поиск включён — отправлю код в OpenAI (один AI-запрос). Отправку в AI можно отключить в настройках.";
     else if (state == "product_missing") {
         text = "🔎 Полной карточки нет\n\nВнеси КБЖУ вручную с упаковки или повтори поиск по точному штрихкоду.";
         if (cfg_.ai_enabled && cfg_.ai_web_search)
@@ -33,7 +33,7 @@ void Bot::product_screen(Id u, const std::string &state, Json p, Id t) {
             actions.emplace_back("Вся упаковка (" + quantity(p["product"]["package"]) + ")",
                                  prefix + "package");
     } else
-        text = "⏳ Проверяю продукт…\n/cancel — отменить.";
+        text = "🔎 Ищу информацию о продукте…\nЭто может занять немного времени.";
     if (state == "product_missing") {
         if (!cfg_.ai_enabled) text = "🔎 Полной карточки в базе нет\nAI отключён. Внеси КБЖУ вручную с упаковки.";
         actions.emplace_back("✍️ Ввести вручную", prefix + "manual");
@@ -49,7 +49,9 @@ void Bot::product_queue(Id u, const std::string &kind, Json p, Id t) {
         check_ai_limit(u, t);
         db_.write("UPDATE users SET ai_consent=1 WHERE id=?", {u});
     }
-    product_screen(u, "product_wait", p, t);
+    auto waiting = db_.rows("SELECT state FROM sessions WHERE user=?", {u});
+    if (waiting.empty() || waiting[0]["state"] != "product_wait")
+        product_screen(u, "product_wait", p, t);
     auto session = db_.rows("SELECT payload FROM sessions WHERE user=?", {u})[0];
     p = Json::parse(session["payload"].get<std::string>());
     db_.write("INSERT INTO product_jobs(user,flow,kind,payload,day,paid) VALUES(?,?,?,?,?,?)",
@@ -80,7 +82,7 @@ bool Bot::product_message(Id u, const std::string &text, Id t) {
         db_.write("DELETE FROM sessions WHERE user=?", {u});
         offer(u, id);
     } else
-        throw InputError("Используй кнопки последней карточки или /cancel.");
+        throw InputError("👆 Выбери кнопку под последней карточкой. Если передумал — нажми «Отмена».");
     return true;
 }
 bool Bot::product_callback(Id u, const std::string &state, const std::string &value, Json p, Id t) {

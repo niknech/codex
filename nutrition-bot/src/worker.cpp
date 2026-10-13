@@ -23,7 +23,7 @@ void Bot::queue_ai(Id u, Id id, Id t) {
         db_.rows("SELECT * FROM drafts WHERE id=? AND user=? AND status='pending' AND expires>=?",
                  {id, u, t});
     if (d.empty())
-        throw InputError("Черновик истёк.");
+        throw InputError("⌛ Эта карточка уже устарела. Добавь еду заново через меню.");
     if (!db_.rows("SELECT id FROM jobs WHERE draft=? AND version=? AND status IN "
                   "('pending','running')",
                   {id, d[0]["version"]})
@@ -74,20 +74,21 @@ bool Bot::ai_one(Id t, const AiTransport &transport) {
             ai_response(transport(ai_request(cfg_.model, d["description"], cfg_.ai_web_search)));
     } catch (const ApiError &e) {
         std::cerr << "AI request failed: API status " << e.status << '\n';
-        failure = "AI недоступен или превышен лимит. Автоповтора платного запроса нет. Повторите "
-                  "кнопкой или введите БЖУ вручную.";
+        failure = "🤖 Сейчас не получилось оценить еду.\n\nМожно повторить кнопкой или ввести "
+                  "КБЖУ вручную. Сам повторно запрос не отправляю.";
         if (e.status == 401)
-            failure = "🔑 OpenAI отклонил ключ API. Проверь ключ на сервере. Ручной ввод доступен.";
+            failure = "🤖 Не удалось подключиться к AI.\n\nАдминистратору нужно проверить ключ "
+                      "OpenAI. Пока можно добавить еду вручную.";
         else if (e.status == 403)
-            failure = "🔒 OpenAI запретил доступ. Проверь доступность API для аккаунта и сервера. "
-                      "Ручной ввод доступен.";
+            failure = "🤖 Доступ к AI пока закрыт.\n\nАдминистратору нужно проверить доступ к "
+                      "OpenAI. Пока можно добавить еду вручную.";
         else if (e.status == 429)
-            failure = "⏳ OpenAI: исчерпан баланс или лимит запросов. Проверь оплату API. "
-                      "Автоматического платного повтора нет.";
+            failure = "⏳ AI пока не принимает запросы: достигнут лимит или закончился баланс "
+                      "OpenAI.\n\nМожно попробовать позже или добавить еду вручную.";
     } catch (const InputError &e) {
         failure = e.what();
     } catch (const std::exception &) {
-        failure = "Не удалось получить оценку AI. Попробуйте ручной ввод.";
+        failure = "🤖 Сейчас не получилось оценить еду. Попробуй ещё раз или выбери ручной ввод.";
     }
     Transaction tx(db_);
     db_.write("UPDATE jobs SET status=? WHERE id=?",
@@ -134,16 +135,16 @@ void Bot::reminders(Id t) {
                 total["water"].get<double>() <
                     g["water"].get<double>() * u["water_pct" + suffix].get<double>() / 100)
                 notify("water" + suffix,
-                       "Сегодня записано " + total["water"].dump() + " из " + g["water"].dump() +
-                           " мл. Если пили ещё, добавьте воду.",
+                       "💧 Небольшое напоминание\n\nСегодня записано " + total["water"].dump() + " из " + g["water"].dump() +
+                           " мл. Если уже пил ещё — добавь воду через меню.",
                        t + (start + 60 - minute) * 60 - t % 60);
         }
         if (g["kcal"].get<double>() > 0 &&
             total["kcal"].get<double>() >=
                 g["kcal"].get<double>() * u["kcal_pct"].get<double>() / 100)
             notify("kcal",
-                   "Сегодня записано " + total["kcal"].dump() + " из " + g["kcal"].dump() +
-                       " ккал — достигнут установленный порог.",
+                   "🔥 Твой ориентир на сегодня\n\nЗаписано " + quantity(total["kcal"]) + " из " + quantity(g["kcal"]) +
+                       " ккал. Это напоминание по выбранному тобой порогу.",
                    t + std::min(60, 1440 - minute) * 60 - t % 60);
     }
     tx.commit();
@@ -185,7 +186,7 @@ void Bot::deliver_one(Telegram &telegram, Id t) {
     } catch (const std::exception &) {
         Transaction tx(db_);
         db_.write("UPDATE outbox SET done=2 WHERE id=?", {row["id"]});
-        say(row["user"], "Не удалось построить график. Проверьте gnuplot на сервере.");
+        say(row["user"], "📈 Не получилось построить график. Попробуй позже — записи в дневнике на месте.");
         tx.commit();
     }
     if (!path.empty())
