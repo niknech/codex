@@ -2,6 +2,7 @@
 /data/
 /.secrets/
 /.env
+__pycache__/
 *.sqlite*
 *.db
 *.db-wal

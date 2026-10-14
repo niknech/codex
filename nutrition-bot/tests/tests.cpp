@@ -23,7 +23,7 @@ int main() {
     try {
         init_timezones();
         const auto keyboard = Json::parse(menu().dump()).at("keyboard");
-        check(keyboard.is_array() && keyboard.size() == 4, "Telegram keyboard is array of rows");
+        check(keyboard.is_array() && keyboard.size() == 5, "Telegram keyboard is array of rows");
         for (const auto &row : keyboard) {
             check(row.is_array() && row.size() == 2, "Telegram keyboard row is array");
             for (const auto &button : row)
@@ -41,6 +41,30 @@ int main() {
         check(local_day(0, "America/New_York") == "1969-12-31", "timezone west");
         check(local_day(0, "Europe/Moscow") == "1970-01-01", "timezone east");
         auto estimate = manual_meal("420 20 18 45 ; lunch");
+        auto offline = ai_request("gpt-6-luna", "two eggs", false);
+        check(!offline.contains("tools") && !offline.contains("max_tool_calls"),
+              "disabled search has no tool access");
+        auto online = ai_request("gpt-6-luna", "brand food", true);
+        check(online["tools"][0]["type"] == "web_search" && online["tool_choice"] == "auto" &&
+              online["max_tool_calls"] == 2, "optional bounded web search");
+        check(online["model"] == "gpt-6-luna" && online["reasoning"]["effort"] == "low" &&
+              online["store"] == false, "Luna request privacy and reasoning");
+        auto cited = Json::parse(R"({"status":"completed","output":[
+            {"type":"web_search_call","status":"completed"},
+            {"type":"message","content":[{"type":"output_text","text":"","annotations":[
+                {"type":"url_citation","url":"https://example.com/nutrition"},
+                {"type":"url_citation","url":"https://example.com/nutrition"},
+                {"type":"url_citation","url":"javascript:bad"}]}]}]})");
+        auto invented = estimate;
+        invented["sources"] = Json::array({"https://invented.invalid"});
+        cited["output"][1]["content"][0]["text"] = invented.dump();
+        auto parsed = ai_response(cited);
+        check(parsed["sources"] == Json::array({"https://example.com/nutrition"}),
+              "distinct safe API citations only");
+        check(estimate_text(parsed).find("https://example.com/nutrition") != std::string::npos,
+              "source visible in preview");
+        cited["output"][1]["content"][0].erase("annotations");
+        check(ai_response(cited)["sources"].empty(), "no fabricated citations");
         check(validate_estimate(estimate)["items"].size() == 1, "manual estimate");
         auto bad = estimate;
         bad["items"][0]["kcal"] = -1;
@@ -65,6 +89,7 @@ int main() {
             Config cfg;
             cfg.allowed = {11, 22};
             cfg.ai_enabled = true;
+            cfg.ai_web_search = true;
             cfg.model = "test";
             Bot bot(db, cfg);
             Id sequence = 0, t = now();
@@ -156,12 +181,17 @@ int main() {
                   "AI 429 no automatic charged retry");
             check(totals(db, 11, day)["kcal"] == 420, "AI failure no meal");
             click(11, "retry:" + std::to_string(id) + ":1");
-            bot.ai_one(t, [&](const Json &) {
+            bot.ai_one(t, [&](const Json &request) {
+                check(request["tools"][0]["type"] == "web_search", "worker uses config");
                 auto response = Json::parse(
                     R"({"status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":""}]}]})");
                 response["output"][0]["content"][0]["text"] = estimate.dump();
+                response["output"][0]["content"][0]["annotations"] = Json::array({
+                    {{"type", "url_citation"}, {"url", "https://example.com/nutrition"}}});
                 return response;
             });
+            auto saved = Json::parse(db.rows("SELECT estimate FROM drafts WHERE id=?", {id})[0]["estimate"].get<std::string>());
+            check(saved["sources"].size() == 1, "citations persist in draft");
             check(totals(db, 11, day)["kcal"] == 420, "AI estimate awaits confirmation");
             click(11, "save:" + std::to_string(id) + ":1");
             check(totals(db, 11, day)["kcal"] == 420, "old estimate button rejected");
@@ -184,14 +214,31 @@ int main() {
             db.write("DELETE FROM notices WHERE user=11");
             bot.reminders(t);
             check(db.rows("SELECT * FROM notices WHERE user=11").empty(), "disabled reminders");
-#ifndef _WIN32
+#ifdef _WIN32
+        if (std::getenv("BOT_TEST_CHARTS")) {
+#else
+        {
+#endif
             for (Id chart_user : {Id{0}, Id{11}}) {
                 auto png = make_chart(db, chart_user, shift_day(day, -6), day);
                 check(std::filesystem::file_size(png) > 100,
                       "valid PNG chart (empty/single point)");
                 std::filesystem::remove_all(std::filesystem::path(png).parent_path());
             }
-#endif
+            if (auto preview = std::getenv("BOT_CHART_PREVIEW")) {
+                Database sample(":memory:");
+                sample.migrate();
+                sample.write("INSERT INTO users(id,chat,tz) VALUES(1,1,'Etc/UTC')");
+                for (int i = 0; i < 14; ++i) {
+                    if (i == 8) continue;
+                    sample.write("INSERT INTO entries(user,kind,day,utc,tz,amount) VALUES(1,'weight',?,0,'Etc/UTC',?)",
+                                 {shift_day("2026-10-01",i), 82500-i*90+(i%3)*120});
+                }
+                auto png = make_chart(sample,1,"2026-10-01","2026-10-14");
+                std::filesystem::copy_file(png, preview, std::filesystem::copy_options::overwrite_existing);
+                std::filesystem::remove_all(std::filesystem::path(png).parent_path());
+            }
+        }
             auto before = totals(db, 11, day);
             db.backup((root / "backup.sqlite3").string());
             Database restored((root / "backup.sqlite3").string());

@@ -134,6 +134,18 @@ Json validate_estimate(const Json &d) {
         for (auto &a : assumptions)
             if (!a.is_string() || a.get<std::string>().size() > 500)
                 throw InputError("AI: неверное допущение.");
+        if (d.contains("sources")) {
+            if (!d["sources"].is_array() || d["sources"].size() > 3)
+                throw InputError("AI: неверные источники.");
+            for (const auto &s : d["sources"]) {
+                if (!s.is_string())
+                    throw InputError("AI: неверная ссылка.");
+                auto url = s.get<std::string>();
+                if (url.size() > 500 || url.find_first_of(" \r\n\t") != std::string::npos ||
+                    (url.rfind("https://", 0) != 0 && url.rfind("http://", 0) != 0))
+                    throw InputError("AI: неверная ссылка.");
+            }
+        }
         for (auto &i : items) {
             if (!i.at("name").is_string() || i["name"].get<std::string>().empty() ||
                 i["name"].get<std::string>().size() > 200)
@@ -247,13 +259,22 @@ std::string estimate_text(const Json &d) {
         << " г\n🥑 Жиры: " << quantity(f) << " г\n🍞 Углеводы: " << quantity(c) << " г\n\n";
     for (auto &i : d["items"]) {
         auto line = i["name"].get<std::string>() + "\n";
-        if (out.str().size() + line.size() < 2800)
+        if (out.str().size() + line.size() <
+            (d.value("sources", Json::array()).empty() ? 2800u : 1600u))
             out << line;
     }
+    if (!d["assumptions"].empty())
+        out << "\n💡 Как я оценил порцию\n";
     for (auto &a : d["assumptions"]) {
-        auto line = "Принято: " + a.get<std::string>() + "\n";
-        if (out.str().size() + line.size() < 3200)
+        auto line = "• " + a.get<std::string>() + "\n";
+        if (out.str().size() + line.size() <
+            (d.value("sources", Json::array()).empty() ? 3200u : 2100u))
             out << line;
+    }
+    if (!d.value("sources", Json::array()).empty()) {
+        out << "\n🔎 Источники оценки\n";
+        for (const auto &url : d["sources"])
+            out << url.get<std::string>() << "\n";
     }
     return out.str();
 }

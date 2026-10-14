@@ -18,7 +18,8 @@ Json menu() {
          std::vector<std::pair<std::string, std::string>>{{"🍽 Добавить еду", "💧 Добавить воду"},
                                                           {"⚖️ Записать вес", "📊 Итоги дня"},
                                                           {"📅 Статистика", "📈 График веса"},
-                                                          {"🎯 Мои нормы", "⚙️ Настройки"}}) {
+                                                          {"🎯 Мои нормы", "⚙️ Настройки"},
+                                                          {"↩️ Главное меню", "✖️ Отмена"}}) {
         keyboard.push_back(Json::array({Json{{"text", left}}, Json{{"text", right}}}));
     }
     return {{"keyboard", keyboard}, {"resize_keyboard", true}};
@@ -38,8 +39,7 @@ void Bot::say(Id user, const std::string &text, const Json &markup) {
             payload["entities"] =
                 Json::array({{{"type", "bold"}, {"offset", 0}, {"length", length}}});
     }
-    if (!markup.is_null())
-        payload["reply_markup"] = markup;
+    payload["reply_markup"] = markup.is_null() ? menu() : markup;
     db_.write("INSERT INTO outbox(user,method,payload) VALUES(?,'sendMessage',?)",
               {user, payload.dump()});
 }
@@ -75,8 +75,7 @@ void Bot::offer(Id user, Id id) {
     if (d["kind"] == "meal") {
         actions.emplace_back("✏️ Исправить значения", "guided:" + suffix);
         if (cfg_.ai_enabled) {
-            actions.emplace_back("Уточнить порцию", "clarify:" + suffix);
-            actions.emplace_back("Повторить AI", "retry:" + suffix);
+            actions.emplace_back("💬 Уточнить", "clarify:" + suffix);
         }
     }
     actions.emplace_back("✖️ Отмена", "cancel:" + suffix);
@@ -122,6 +121,8 @@ bool Bot::process_one(Id time) {
                     try {
                         if (cb)
                             callback(user, envelope.value("data", ""), time);
+                        else if (msg.contains("photo"))
+                            product_photo(user, msg["photo"], time);
                         else
                             message(user, msg["chat"]["id"], text, time);
                         db_.exec("RELEASE action");
@@ -153,6 +154,30 @@ static std::vector<std::string> words(const std::string &text) {
     return out;
 }
 void Bot::message(Id u, Id, const std::string &text, Id t) {
+    if (text == "✖️ Отмена" || text == "↩️ Главное меню") {
+        message(u,u,text == "✖️ Отмена" ? "/cancel" : "/start",t);
+        return;
+    }
+    if (text.rfind("/ai_bonus", 0) == 0) {
+        if (!cfg_.admins.count(u)) throw InputError("Команда доступна только администратору.");
+        std::istringstream input(text);
+        std::string command, target, amount = "5", extra;
+        input >> command >> target;
+        if (command != "/ai_bonus" || target.empty()) throw InputError("/ai_bonus ID [количество], по умолчанию +5");
+        if (input >> amount) { if (input >> extra) throw InputError("/ai_bonus ID [количество]"); }
+        Id id;
+        try { size_t end; id = std::stoll(target, &end); if (end != target.size() || id <= 0) throw std::runtime_error("id"); }
+        catch (...) { throw InputError("Некорректный ID."); }
+        auto n = number(amount, 1, 100);
+        if (n != std::floor(n)) throw InputError("Количество должно быть целым.");
+        if (db_.rows("SELECT id FROM users WHERE id=?", {id}).empty()) throw InputError("Пользователь ещё не зарегистрирован.");
+        auto day = local_day(t, "Etc/UTC");
+        db_.write("INSERT INTO ai_bonus VALUES(?,?,?) ON CONFLICT(user,day) DO UPDATE SET amount=MIN(1000,amount+excluded.amount)", {id,day,static_cast<int>(n)});
+        auto bonus = db_.rows("SELECT amount FROM ai_bonus WHERE user=? AND day=?",{id,day})[0]["amount"].get<int>();
+        say(u, "✅ Лимит пользователя " + target + " на сегодня: " + std::to_string(cfg_.ai_daily_user + bonus) +
+            " запросов.\nБонус действует до 00:00 UTC (03:00 МСК). Общий лимит бота сохраняется.");
+        return;
+    }
     if (text.size() > 3500)
         throw InputError("Сообщение слишком длинное (максимум 3500 байт).");
     auto user = db_.rows("SELECT * FROM users WHERE id=?", {u})[0];
@@ -164,19 +189,17 @@ void Bot::message(Id u, Id, const std::string &text, Id t) {
             text == "/start" ? "🍽 Твой дневник питания\n\nЕда, вода и вес — всё в одном "
                                "месте.\nВыбери действие в меню ниже.\n\n🕒 Часовой пояс: " +
                                    user["tz"].get<std::string>() +
-                                   "\n🎯 Личные нормы можно заполнить позже.\n\n/help — помощь · "
-                                   "/cancel — отмена ввода"
-                             : "Незавершённые операции отменены.",
+                                   "\n🎯 Личные нормы можно заполнить позже.\n\nПодсказки и напоминания — в настройках."
+                             : "👌 Ввод отменён\n\nМожно начать заново — выбери действие в меню.",
             menu());
         return;
     }
     if (text == "/help") {
-        say(u, "📖 Как пользоваться дневником\n\n🍽 Еда → Завтрак / Обед / Ужин → Вручную.\nВведи "
+        say(u, "📖 Как пользоваться дневником\n\n🍽 Еда → Завтрак / Обед / Ужин → AI или "
+               "Вручную.\nAI оценит описание еды и порции, если подключён.\nВручную введи "
                "название и значения по шагам или четыре числа сразу.\n\n⚖️ Вес → число в кг → дата "
                "кнопкой или в календаре.\n\n💧 Вода → готовая порция или своё количество.\n📊 "
-               "Итоги дня и 📅 Статистика — в меню.\n\n/cancel — отменить ввод\n/entries — "
-               "последние записи и удаление\n/timezone Europe/Moscow — часовой пояс\n/reminders on "
-               "или off — напоминания\n/id — твой Telegram ID");
+               "Итоги дня и 📅 Статистика — в меню.\n\n⚙️ В настройках — напоминания, часовой пояс и последние записи.\n✖️ Отмена — в нижнем меню, если хочешь начать заново.");
         return;
     }
     if (text == "📊 Итоги дня" || text == "/today") {
@@ -185,9 +208,9 @@ void Bot::message(Id u, Id, const std::string &text, Id t) {
     }
     if (text == "💧 Добавить воду") {
         session(u, "water", {}, t);
-        say(u, "Сколько воды?",
+        say(u, "💧 Добавим воду\n\nВыбери порцию или напиши своё количество в мл.",
             buttons(
-                {{"+150 мл", "water:150"}, {"+250 мл", "water:250"}, {"+500 мл", "water:500"}}));
+                {{"+150 мл", "water:150"}, {"+250 мл", "water:250"}, {"+500 мл", "water:500"}, {"✖️ Отмена","nav:cancel"}}));
         return;
     }
     if (text == "⚖️ Записать вес") {
@@ -199,21 +222,17 @@ void Bot::message(Id u, Id, const std::string &text, Id t) {
         return;
     }
     if (text == "🎯 Мои нормы") {
-        session(u, "goals", {}, t);
-        say(u, "Введите ккал Б Ж У вода_мл, например: 2000 100 70 240 2000. Можно начать с даты. "
-               "Новые нормы по умолчанию действуют с завтра.");
+        preferences(u,"pref_goal",Json::object(),t);
         return;
     }
     if (text == "⚙️ Настройки") {
-        say(u, "Часовой пояс: " + user["tz"].get<std::string>() +
-                   "\n/timezone Europe/Moscow\n/reminders on или off\n/rules 13 30 17 60 80\n/ai "
-                   "off — запретить отправку описаний AI");
+        preferences(u,"pref_home",Json::object(),t);
         return;
     }
     if (text == "📅 Статистика" || text == "📈 График веса") {
         bool chart = text == "📈 График веса";
         std::string p = chart ? "chart:" : "stats:";
-        say(u, "Выберите период",
+        say(u, "📅 За какой период посмотрим?",
             buttons({{"Сегодня", p + "1"},
                      {"Вчера", p + "0"},
                      {"7 дней", p + "7"},
@@ -223,17 +242,22 @@ void Bot::message(Id u, Id, const std::string &text, Id t) {
     }
     if (text == "/entries") {
         auto entries = db_.rows(
-            "SELECT id,day,kind FROM entries WHERE user=? AND deleted=0 ORDER BY id DESC LIMIT 10",
+            "SELECT id,day,kind,amount,kcal,description FROM entries WHERE user=? AND deleted=0 ORDER BY id DESC LIMIT 10",
             {u});
         if (entries.empty())
-            say(u, "Записей нет.");
+            say(u, "📝 Здесь появятся твои записи\n\nДобавь еду, воду или вес через меню.");
         for (auto &e : entries)
-            say(u, e["day"].get<std::string>() + " " + e["kind"].get<std::string>(),
+            say(u, "📅 " + display_day(e["day"]) + "\n\n" +
+                (e["kind"]=="weight" ? "⚖️ Вес: "+quantity(e["amount"].get<double>()/1000)+" кг" :
+                 e["kind"]=="water" ? "💧 Вода: "+quantity(e["amount"])+" мл" :
+                 "🍽 "+e["description"].get<std::string>()+"\n🔥 "+quantity(e["kcal"])+" ккал"),
                 buttons({{"Удалить эту запись", "undo:" + std::to_string(e["id"].get<Id>())}}));
         return;
     }
     if (text == "/ai off") {
         db_.write("UPDATE users SET ai_consent=0 WHERE id=?", {u});
+        db_.write("DELETE FROM sessions WHERE user=? AND state LIKE 'product_%'", {u});
+        db_.write("UPDATE product_jobs SET status='cancelled',payload='{}' WHERE user=? AND status='pending'", {u});
         db_.write("UPDATE drafts SET status='cancelled' WHERE user=? AND status='pending' AND "
                   "kind='meal'",
                   {u});
@@ -245,7 +269,7 @@ void Bot::message(Id u, Id, const std::string &text, Id t) {
         auto tz = text.substr(10);
         validate_timezone(tz);
         db_.write("UPDATE users SET tz=? WHERE id=?", {tz, u});
-        say(u, "Часовой пояс изменён. Прошлые записи сохранили свои даты.");
+        say(u, "🕒 Готово! Теперь ориентируюсь на твоё время. Даты прошлых записей не изменились.");
         return;
     }
     if (text.rfind("/reminders ", 0) == 0) {
@@ -255,7 +279,7 @@ void Bot::message(Id u, Id, const std::string &text, Id t) {
         db_.write("UPDATE users SET reminders=? WHERE id=?", {v == "on" ? 1 : 0, u});
         if (v == "off")
             db_.write("UPDATE outbox SET done=2 WHERE user=? AND done=0 AND expires>0", {u});
-        say(u, "Настройка напоминаний сохранена.");
+        say(u, "✅ Готово! Настройки напоминаний сохранены.");
         return;
     }
     if (text.rfind("/rules ", 0) == 0) {
@@ -271,6 +295,8 @@ void Bot::message(Id u, Id, const std::string &text, Id t) {
         say(u, "Пороги сохранены; окно воды — час после указанного времени.");
         return;
     }
+    if ((text.empty() || text[0] != '/') && preference_message(u, text, t)) return;
+    if ((text.empty() || text[0] != '/') && product_message(u, text, t)) return;
     if ((text.empty() || text[0] != '/') && ui_message(u, text, t))
         return;
     auto split = text.find(' ');
@@ -283,7 +309,7 @@ void Bot::message(Id u, Id, const std::string &text, Id t) {
         if (ss[0]["expires"].get<Id>() < t) {
             db_.write("DELETE FROM sessions WHERE user=?", {u});
             if (text.empty() || text[0] != '/') {
-                say(u, "Предыдущий диалог истёк. Выберите действие заново.");
+                say(u, "⌛ Давай начнём заново — выбери действие в меню.");
                 return;
             }
         } else {
@@ -321,22 +347,29 @@ void Bot::message(Id u, Id, const std::string &text, Id t) {
                       "status='pending' AND expires>=? AND version=?",
                       {e.dump(), id, u, t, payload.at("version")});
             if (!db_.changes())
-                throw InputError("Черновик устарел.");
+                throw InputError("Эта карточка уже изменилась. Открой последнюю версию.");
         } else
             id = draft(u, "meal", today, arg, e, t);
         offer(u, id);
     } else if (cmd == "/food" || cmd == "/fooddate" || cmd == "/clarify") {
         if (!cfg_.ai_enabled)
-            throw InputError("AI отключён. Используйте /manual ккал Б Ж У ; название");
+            throw InputError("🤖 AI пока недоступен. Выбери «Вручную» при добавлении еды — помогу заполнить значения.");
         Id id;
         if (cmd == "/clarify") {
             id = payload.at("id");
-            auto d = db_.rows("SELECT description FROM drafts WHERE id=? AND user=? AND "
+            auto d = db_.rows("SELECT description,estimate FROM drafts WHERE id=? AND user=? AND "
                               "status='pending' AND expires>=? AND version=?",
                               {id, u, t, payload.at("version")});
             if (d.empty())
-                throw InputError("Черновик устарел.");
-            std::string desc = d[0]["description"].get<std::string>() + "\nУточнение: " + arg;
+                throw InputError("Эта карточка уже изменилась. Открой последнюю версию.");
+            auto previous = Json::parse(d[0]["estimate"].get<std::string>());
+            std::string context;
+            if (previous.value("status", "") == "needs_clarification")
+                context = "\nПредыдущий вопрос: " + previous["question"].get<std::string>();
+            else if (previous.value("status", "") == "estimate")
+                context = "\nПредыдущая оценка: " + estimate_text(previous);
+            std::string desc =
+                d[0]["description"].get<std::string>() + context + "\nУточнение: " + arg;
             if (desc.size() > 7000)
                 throw InputError("Слишком много уточнений. Начните новое описание.");
             db_.write("UPDATE drafts SET description=?,version=version+1,estimate='{}' WHERE id=?",
@@ -388,7 +421,7 @@ void Bot::message(Id u, Id, const std::string &text, Id t) {
                   "carbs,water=excluded.water",
                   {u, day, number(w[0], 1, 20000), number(w[1], 0, 2000), number(w[2], 0, 2000),
                    number(w[3], 0, 2000), water});
-        say(u, "Нормы сохранены с " + day + ". Напоминания: /reminders on");
+        say(u, "✅ Ориентиры сохранены\n\nНачнут действовать " + display_day(day) + ".\nНапоминания можно включить в настройках.");
     } else if (cmd == "/stats" || cmd == "/chart") {
         int n = static_cast<int>(number(arg.empty() ? "7" : arg, 1, 366));
         period(u, shift_day(today, 1 - n), today, 0, cmd == "/chart");
@@ -403,7 +436,7 @@ void Bot::message(Id u, Id, const std::string &text, Id t) {
         say(u, "Период: " + a + " — " + b, buttons({{"Показать", "period:confirm"}}));
         return;
     } else {
-        say(u, "Выберите действие в меню или /help.", menu());
+        say(u, "👋 Чем займёмся?\nВыбери действие в меню. Подсказки найдёшь в настройках.", menu());
         return;
     }
     db_.write("DELETE FROM sessions WHERE user=?", {u});
@@ -413,6 +446,7 @@ void Bot::callback(Id u, const std::string &action, Id t) {
     auto verb = action.substr(0, sep);
     auto value = sep == std::string::npos ? "" : action.substr(sep + 1);
     auto today = local_day(t, db_.rows("SELECT tz FROM users WHERE id=?", {u})[0]["tz"]);
+    if (action=="nav:cancel") { message(u,u,"/cancel",t); return; }
     if (verb == "ui") {
         ui_callback(u, value, t);
         return;
@@ -429,7 +463,7 @@ void Bot::callback(Id u, const std::string &action, Id t) {
     }
     if (verb == "custom") {
         session(u, value == "chart" ? "chartperiod" : "period", {}, t);
-        say(u, "Введите две даты через пробел: 01.10.2026 10.10.2026");
+        say(u, "📅 Выбери свой период\n\nНапиши начало и конец через пробел. Например: 01.10.2026 10.10.2026");
         return;
     }
     if (verb == "period") {
@@ -456,9 +490,9 @@ void Bot::callback(Id u, const std::string &action, Id t) {
         size_t n;
         id = std::stoll(id_text, &n);
         if (n != id_text.size() || id < 1)
-            throw InputError("Неверная кнопка.");
+            throw InputError("Эта кнопка уже не подходит. Выбери действие в меню.");
     } catch (const std::logic_error &) {
-        throw InputError("Неверная кнопка.");
+        throw InputError("Эта кнопка уже не подходит. Выбери действие в меню.");
     }
     if (verb == "undo") {
         db_.write("UPDATE entries SET deleted=1 WHERE id=? AND user=? AND deleted=0", {id, u});
@@ -467,12 +501,12 @@ void Bot::callback(Id u, const std::string &action, Id t) {
     }
     auto rows = db_.rows("SELECT * FROM drafts WHERE id=? AND user=?", {id, u});
     if (rows.empty())
-        throw InputError("Черновик недоступен.");
+        throw InputError("Эта карточка уже недоступна. Начни заново через меню.");
     auto d = rows[0];
     if (d["status"] != "pending")
-        throw InputError(d["status"] == "saved" ? "Уже записано." : "Черновик отменён.");
+        throw InputError(d["status"] == "saved" ? "✅ Это уже сохранено в дневнике." : "Ты уже отменил эту запись. Можно добавить новую через меню.");
     if (d["expires"].get<Id>() < t)
-        throw InputError("Черновик истёк. Начните заново.");
+        throw InputError("Мы давно не возвращались к этой записи. Давай начнём заново через меню.");
     if (version_sep == std::string::npos ||
         value.substr(version_sep + 1) != std::to_string(d["version"].get<Id>()))
         throw InputError("Оценка изменилась. Используйте кнопки под последней оценкой.");
@@ -484,6 +518,17 @@ void Bot::callback(Id u, const std::string &action, Id t) {
     if (verb == "guided") {
         if (d["kind"] != "meal")
             throw InputError("Это не запись еды.");
+        auto estimate = Json::parse(d["estimate"].get<std::string>());
+        if (estimate.value("status", "") == "estimate") {
+            validate_estimate(estimate);
+            screen(u, estimate["items"].size() == 1 ? "meal_edit_fields" : "meal_edit_items",
+                   {{"edit_id", id},
+                    {"edit_version", d["version"]},
+                    {"estimate", estimate},
+                    {"item", 0}},
+                   t);
+            return;
+        }
         screen(u, "meal_name",
                {{"day", d["day"]},
                 {"category", d["category"]},
@@ -500,7 +545,9 @@ void Bot::callback(Id u, const std::string &action, Id t) {
     }
     if (verb == "edit" || verb == "clarify") {
         session(u, verb, {{"id", id}, {"version", d["version"]}}, t);
-        say(u, verb == "edit" ? "Введите ккал Б Ж У ; название" : "Уточните порцию или состав.");
+        say(u, verb == "edit" ? "Введите ккал Б Ж У ; название"
+                              : "💬 Напиши, что изменить.\nНапример: сок 100 мл, яйца жареные. "
+                                "Пересчитаю всю порцию.");
         return;
     }
     if (verb != "save")

@@ -1,4 +1,5 @@
 #include "http.hpp"
+#include "products.hpp"
 #include <curl/curl.h>
 #include <memory>
 namespace nb {
@@ -69,6 +70,36 @@ Json Telegram::call(const std::string &method, const Json &payload) {
     if (!j.value("ok", false))
         throw ApiError(j.value("error_code", 502));
     return j.at("result");
+}
+Json lookup_product(const std::string &raw) {
+    auto code=barcode(raw);
+    std::string body;
+    auto h=handle("https://world.openfoodfacts.org/api/v3/product/"+code+
+        "?fields=code,product_name,product_name_ru,nutriments,product_quantity,product_quantity_unit,obsolete&lc=ru",body,20);
+    curl_easy_setopt(h.get(),CURLOPT_USERAGENT,"NutritionBot/0.2 (https://github.com/niknech/codex)");
+    try { return finish(h.get(),body); }
+    catch (const ApiError &e) { if (e.status==404) return Json::object(); throw; }
+}
+std::string Telegram::photo_data(const std::string &file_id) {
+    auto file=call("getFile",{{"file_id",file_id}});
+    auto path=file.at("file_path").get<std::string>();
+    if (path.find("..")!=std::string::npos || path.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-/.")!=std::string::npos)
+        throw ApiError(400);
+    std::string body;
+    auto url=base_;
+    url.insert(std::string("https://api.telegram.org/").size(),"file/");
+    auto h=handle(url+path,body,20);
+    if (curl_easy_perform(h.get())!=CURLE_OK) throw ApiError(0);
+    long status=0; curl_easy_getinfo(h.get(),CURLINFO_RESPONSE_CODE,&status);
+    if (status!=200 || body.size()<3 || static_cast<unsigned char>(body[0])!=0xff || static_cast<unsigned char>(body[1])!=0xd8)
+        throw ApiError(400);
+    static const char chars[]="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string encoded;
+    unsigned int buffer=0; int bits=0;
+    for (unsigned char c:body) { buffer=(buffer<<8)|c; bits+=8; while(bits>=6) { bits-=6; encoded+=chars[(buffer>>bits)&63]; } }
+    if (bits) encoded+=chars[(buffer<<(6-bits))&63];
+    while(encoded.size()%4) encoded+='=';
+    return "data:image/jpeg;base64,"+encoded;
 }
 void Telegram::photo(Id chat, const std::string &path) {
     std::string body;

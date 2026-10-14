@@ -1,5 +1,6 @@
 #include "bot.hpp"
 #include "schema.hpp"
+#include "products.hpp"
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -86,8 +87,8 @@ int main() {
         check(old.rows("SELECT amount,category FROM entries")[0] ==
                   Json({{"amount", 82400}, {"category", "unspecified"}}),
               "migration preserves old weight");
-        check(old.rows("SELECT MAX(version) AS v FROM schema_migrations")[0]["v"] == 2,
-              "migration version 2");
+        check(old.rows("SELECT MAX(version) AS v FROM schema_migrations")[0]["v"] == 3,
+              "migration version 3");
         auto cal = calendar_buttons("2024-02-01", "2024-03-01", "ui:1:");
         bool leap = false;
         for (auto &row : cal["inline_keyboard"])
@@ -112,7 +113,7 @@ int main() {
               "foreign wizard button rejected");
         f.click(stale);
         check(f.state() == "meal_method", "category step");
-        check(f.last()["reply_markup"]["inline_keyboard"].size() == 2, "two input methods");
+        check(f.last()["reply_markup"]["inline_keyboard"].size() == 3, "three input methods");
         auto manual = f.action("manual"), ai = f.action("ai");
         f.click(ai);
         check(f.db.rows("SELECT * FROM jobs").empty(), "disabled AI no request");
@@ -169,9 +170,17 @@ int main() {
         f.send("200 10 5 30");
         id = f.draft_id();
         f.click("guided:" + std::to_string(id) + ":1");
-        f.send("Суп, исправлено");
-        f.click(f.action("compact"));
-        f.send("150 10 5 20");
+        check(f.state() == "meal_edit_fields", "edit skips full manual wizard");
+        f.click(f.action("field_0"));
+        f.send("-5");
+        check(f.state() == "meal_edit_value", "invalid edit stays on field");
+        f.send("150");
+        auto edited =
+            Json::parse(f.db.rows("SELECT estimate FROM drafts WHERE id=?", {id})[0]["estimate"]
+                            .get<std::string>());
+        check(edited["items"][0]["name"] == "Суп" && edited["items"][0]["protein_g"] == 10 &&
+                  edited["items"][0]["carbs_g"] == 30,
+              "edit preserves name and other nutrients");
         f.click("save:" + std::to_string(id) + ":1");
         check(totals(f.db, 11, f.day)["kcal"] == 450, "old confirmation invalid after editing");
         f.click("save:" + std::to_string(id) + ":2");
@@ -236,6 +245,227 @@ int main() {
                     utf16 += c >= 0xf0 ? 2 : 1;
             check(utf16 <= 4096, "message fits Telegram length");
         }
+        // Guided AI: consent, category, clarification, confirmation and cost limits.
+        Fixture a;
+        a.cfg.ai_enabled = true;
+        a.cfg.model = "gpt-5-nano";
+        a.cfg.ai_daily_user = 2;
+        a.send("🍽 Добавить еду");
+        a.click(a.action("cat_lunch"));
+        a.click(a.action("ai"));
+        check(a.state() == "meal_ai", "AI description screen");
+        a.send("   ");
+        check(a.db.rows("SELECT * FROM drafts").empty(), "empty AI description rejected");
+        a.send("Рис");
+        auto aid = a.draft_id();
+        auto suffix = std::to_string(aid) + ":1";
+        check(a.db.rows("SELECT * FROM jobs").size() == 1,
+              "AI selection starts estimate immediately");
+        a.click("consent:" + suffix, 22);
+        check(a.db.rows("SELECT * FROM jobs").size() == 1, "foreign AI consent rejected");
+        a.click("consent:" + suffix);
+        a.click("consent:" + suffix);
+        check(a.db.rows("SELECT * FROM jobs").size() == 1, "duplicate consent costs once");
+        Bot ab(a.db, a.cfg);
+        auto response = [](const Json &estimate) {
+            return Json{{"status", "completed"},
+                        {"output",
+                         Json::array({{{"type", "message"},
+                                       {"content", Json::array({{{"type", "output_text"},
+                                                                 {"text", estimate.dump()}}})}}})}};
+        };
+        ab.ai_one(a.t, [&](const Json &request) {
+            check(request["input"] == "Рис" && request["store"] == false,
+                  "only description sent without storage");
+            check(request["model"] == "gpt-5-nano" && request["reasoning"]["effort"] == "low",
+                  "cheap model bounded reasoning");
+            check(request["text"]["format"]["schema"]["properties"]["status"]["enum"] ==
+                      Json::array({"estimate", "not_food"}),
+                  "AI cannot return a clarification question");
+            auto estimated = manual_meal("260 6 2 56 ; рис 200 г");
+            estimated["assumptions"] = Json::array({"Порция риса 200 г"});
+            return response(estimated);
+        });
+        check(totals(a.db, 11, a.day)["kcal"] == 0, "clarification never saved");
+        a.click("clarify:" + std::to_string(aid) + ":2");
+        a.send("100 г варёного риса");
+        ab.ai_one(a.t, [&](const Json &request) {
+            check(request["input"].get<std::string>().find("100 г") != std::string::npos,
+                  "clarification sent with original description");
+            check(request["input"].get<std::string>().find("Порция риса 200 г") !=
+                      std::string::npos,
+                  "previous assumptions available for correction");
+            return response(manual_meal("130 3 1 28 ; рис"));
+        });
+        check(totals(a.db, 11, a.day)["kcal"] == 0, "AI result needs confirmation");
+        a.click("save:" + suffix);
+        check(totals(a.db, 11, a.day)["kcal"] == 0, "stale AI save denied");
+        a.click("save:" + std::to_string(aid) + ":4");
+        check(a.db.rows("SELECT category,kcal FROM entries")[0] ==
+                  Json({{"category", "lunch"}, {"kcal", 130}}),
+              "AI retains category on save");
+        a.send("🍽 Добавить еду");
+        a.click(a.action("cat_dinner"));
+        a.click(a.action("ai"));
+        a.send("100 г риса");
+        check(a.db.rows("SELECT * FROM jobs").size() == 2, "AI daily limit enforced");
+        check(totals(a.db, 11, a.day)["kcal"] == 130, "limit does not add food");
+        Fixture e;
+        e.send("/manual 200 10 5 20 ; стейк");
+        auto eid = e.draft_id();
+        auto meal = manual_meal("200 10 5 20 ; стейк");
+        meal["items"].push_back(manual_meal("100 2 3 15 ; сок")["items"][0]);
+        meal["assumptions"] = Json::array({"Считаю половину стейка за 150 г"});
+        e.db.write("UPDATE drafts SET estimate=? WHERE id=?", {meal.dump(), eid});
+        e.click("guided:" + std::to_string(eid) + ":1", 22);
+        check(e.db.rows("SELECT * FROM sessions WHERE user=22").empty(),
+              "foreign nutrient edit denied");
+        e.click("guided:" + std::to_string(eid) + ":1");
+        check(e.state() == "meal_edit_items", "multi-item estimate selects product");
+        e.click(e.action("item_1"));
+        e.click(e.action("field_1"));
+        e.send("4,5");
+        auto changed =
+            Json::parse(e.db.rows("SELECT estimate FROM drafts WHERE id=?", {eid})[0]["estimate"]
+                            .get<std::string>());
+        check(changed["items"][0] == meal["items"][0], "unselected food unchanged");
+        check(changed["items"][1]["protein_g"] == 4.5 && changed["items"][1]["kcal"] == 100,
+              "selected nutrient changed only");
+        check(changed["assumptions"] == meal["assumptions"], "portion explanation retained");
+        auto explanation = estimate_text(changed);
+        check(explanation.find("💡 Как я оценил порцию") != std::string::npos &&
+                  explanation.find("Принято:") == std::string::npos,
+              "friendly assumption heading");
+        e.click("guided:" + std::to_string(eid) + ":2");
+        e.click(e.action("item_0"));
+        e.click(e.action("field_0"));
+        e.db.write("UPDATE drafts SET version=version+1 WHERE id=?", {eid});
+        e.send("1");
+        check(Json::parse(e.db.rows("SELECT estimate FROM drafts WHERE id=?", {eid})[0]["estimate"]
+                              .get<std::string>()) == changed,
+              "stale editor cannot overwrite newer estimate");
+        Fixture b;
+        b.cfg.admins={11};
+        b.send("/ai_bonus 22",22);
+        check(b.db.rows("SELECT * FROM ai_bonus").empty(),"non-admin bonus denied");
+        b.send("/ai_bonus 22");
+        check(b.db.rows("SELECT amount FROM ai_bonus")[0]["amount"]==5,"admin bonus default and update dedup");
+        b.send("/ai_bonus 22 3");
+        check(b.db.rows("SELECT amount FROM ai_bonus")[0]["amount"]==8,"bonus increments");
+        b.send("/ai_bonus 22 1.5");
+        check(b.db.rows("SELECT amount FROM ai_bonus")[0]["amount"]==8,"fractional bonus rejected");
+        b.send("🍽 Добавить еду"); b.click(b.action("cat_breakfast")); b.click(b.action("barcode"));
+        b.send("3017620422003");
+        Bot bb(b.db,b.cfg);
+        Json product={{"barcode","3017620422003"},{"name","Тест"},{"unit","g"},{"package",200},
+            {"kcal",500},{"protein",10},{"fat",20},{"carbs",60},{"source","test"},{"url",""}};
+        auto lookup=[&](const std::string &) { return Json{{"product",{{"code","3017620422003"},
+            {"product_name","Тест"},{"product_quantity_unit","g"},{"product_quantity",200},
+            {"nutriments",{{"energy-kcal_100g",500},{"proteins_100g",10},{"fat_100g",20},{"carbohydrates_100g",60}}}}}}; };
+        auto no_ai=[](const Json &) -> Json { throw std::runtime_error("unexpected AI"); };
+        auto no_photo=[](const std::string &) { return std::string(); };
+        bb.product_one(b.t,no_ai,lookup,no_photo);
+        check(b.state()=="product_review","OFF lookup without AI");
+        auto accept=b.action("accept"); b.click(accept,22);
+        check(b.db.rows("SELECT * FROM products").empty(),"foreign product accept rejected");
+        b.click(accept);
+        check(b.state()=="product_amount","confirmed product portion");
+        b.click(b.action("package"));
+        check(totals(b.db,11,b.day)["kcal"]==0,"product awaits meal save");
+        b.click("save:"+std::to_string(b.draft_id())+":1");
+        check(totals(b.db,11,b.day)["kcal"]==1000,"package nutrition scaled");
+        b.send("🍽 Добавить еду"); b.click(b.action("cat_lunch")); b.click(b.action("barcode"));
+        b.send("3017620422003");
+        check(b.state()=="product_review" && b.db.rows("SELECT * FROM product_jobs").size()==1,"confirmed cache avoids network");
+        check(product_estimate(product,50)["items"][0]["kcal"]==250,"50 gram scaling");
+        auto incomplete=lookup(""); incomplete["product"]["nutriments"].erase("fat_100g");
+        check(off_product(incomplete,"3017620422003").is_null(),"missing nutrients not zero");
+        Fixture w;
+        w.cfg.ai_enabled=true; w.cfg.ai_web_search=true; w.cfg.model="gpt-6-luna";
+        w.cfg.ai_daily_user=1; w.cfg.admins={11};
+        w.send("🍽 Добавить еду"); w.click(w.action("cat_dinner")); w.click(w.action("barcode"));
+        w.send("3017620422003");
+        Bot wb(w.db,w.cfg);
+        auto before_fallback=w.db.rows("SELECT COUNT(*) AS n FROM outbox WHERE method='sendMessage'")[0]["n"];
+        wb.product_one(w.t,no_ai,[](const std::string &){return Json::object();},no_photo);
+        check(w.db.rows("SELECT COUNT(*) AS n FROM outbox WHERE method='sendMessage'")[0]["n"]==before_fallback,
+              "OFF to AI fallback sends no duplicate progress message");
+        check(w.db.rows("SELECT * FROM product_jobs WHERE paid=1").size()==1,"OFF miss reserves AI fallback");
+        auto wrap=[](const Json &p) { return Json{{"status","completed"},{"output",Json::array({
+            {{"type","message"},{"content",Json::array({{{"type","output_text"},{"text",p.dump()}}})}}})}}; };
+        wb.product_one(w.t,[&](const Json &request){
+            check(request["tools"][0]["type"]=="web_search","barcode web request");
+            return wrap({{"found",false}});
+        },lookup,no_photo);
+        check(w.state()=="product_missing","unmatched barcode asks label");
+        auto photo=[&] { w.ingest({{"update_id",++w.seq},{"message",{{"from",{{"id",11}}},
+            {"chat",{{"id",11},{"type","private"}}},{"photo",Json::array({{{"file_id","fixture-photo"}}})}}}}); };
+        photo();
+        check(w.state()=="product_missing","photo shares exhausted AI quota");
+        w.send("/ai_bonus 11"); photo();
+        check(w.state()=="product_wait","bonus enables photo job");
+        product["found"]=true;
+        wb.product_one(w.t,[&](const Json &request){
+            check(!request.contains("tools") && request["input"][0]["content"][1]["type"]=="input_image","label uses image without web");
+            return wrap(product);
+        },lookup,[](const std::string &){return std::string("data:image/jpeg;base64,fixture");});
+        check(w.state()=="product_review","label returns review");
+        check(w.db.rows("SELECT * FROM products").empty(),"label not cached before confirmation");
+        photo(); w.send("/ai off");
+        bool sent=false;
+        wb.product_one(w.t,[&](const Json &){sent=true; return wrap(product);},lookup,no_photo);
+        check(!sent && w.state().empty(),"revoked consent cancels photo job");
+        w.cfg.ai_daily_global=2;
+        w.send("🍽 Добавить еду"); w.click(w.action("cat_lunch")); w.click(w.action("ai")); w.send("рис");
+        check(w.db.rows("SELECT * FROM jobs").empty(),"bonus cannot bypass global quota");
+        auto unverified=product; unverified["url"]="https://invented.invalid";
+        check(product_response(wrap(unverified),"web","3017620422003").is_null(),"web product needs actual source");
+        bool checksum=false; try { barcode("3017620422004"); } catch(const InputError &) {checksum=true;}
+        check(checksum,"invalid barcode checksum rejected");
+        Fixture scan;
+        scan.cfg.ai_enabled=true; scan.cfg.model="gpt-6-luna";
+        scan.send("🍽 Добавить еду"); scan.click(scan.action("cat_breakfast")); scan.click(scan.action("barcode"));
+        scan.ingest({{"update_id",++scan.seq},{"message",{{"from",{{"id",11}}},
+            {"chat",{{"id",11},{"type","private"}}},{"photo",Json::array({{{"file_id","fixture"}}})}}}});
+        Bot sb(scan.db,scan.cfg);
+        sb.product_one(scan.t,[&](const Json &){return wrap({{"found",true},{"barcode","3017620422003"}});},lookup,no_photo);
+        check(scan.state()=="product_scan_check","photo code requires confirmation");
+        scan.click(scan.action("lookup"));
+        sb.product_one(scan.t,no_ai,[](const std::string &){return Json::object();},no_photo);
+        check(scan.state()=="product_missing" && scan.db.rows("SELECT * FROM product_jobs WHERE paid=1").size()==1,
+              "search disabled does not enqueue web fallback");
+        scan.cfg.ai_daily_user=1;
+        scan.db.write("INSERT INTO ai_bonus VALUES(?,?,5)",{11,shift_day(local_day(scan.t,"Etc/UTC"),-1)});
+        scan.ingest({{"update_id",++scan.seq},{"message",{{"from",{{"id",11}}},
+            {"chat",{{"id",11},{"type","private"}}},{"photo",Json::array({{{"file_id","fixture"}}})}}}});
+        check(scan.state()=="product_missing","yesterday bonus does not extend today quota");
+        Fixture settings;
+        settings.send("⚙️ Настройки");
+        check(settings.last()["text"].get<std::string>().find("/timezone")==std::string::npos,"settings without command instructions");
+        auto reminders=settings.action("reminders");
+        settings.click(reminders,22);
+        check(settings.db.rows("SELECT reminders FROM users WHERE id=22")[0]["reminders"]==0,"foreign settings button rejected");
+        settings.click(reminders);
+        auto enable=settings.action("rem_on"); settings.click(enable);
+        check(settings.db.rows("SELECT reminders FROM users WHERE id=11")[0]["reminders"]==1,"reminders enabled by button");
+        settings.click(settings.action("rule_0"));
+        settings.click(settings.action("plus"));
+        check(settings.db.rows("SELECT water_hour1 FROM users WHERE id=11")[0]["water_hour1"]==13,"rule edit needs confirmation");
+        settings.click(settings.action("rule_save"));
+        check(settings.db.rows("SELECT water_hour1 FROM users WHERE id=11")[0]["water_hour1"]==14,"rule saved by button");
+        settings.click(settings.action("rem_off")); settings.click(enable);
+        check(settings.db.rows("SELECT reminders FROM users WHERE id=11")[0]["reminders"]==0,"stale settings cannot re-enable reminder");
+        settings.send("⚙️ Настройки"); settings.click(settings.action("zones")); settings.click(settings.action("zone_4"));
+        check(settings.db.rows("SELECT tz FROM users WHERE id=11")[0]["tz"]=="Asia/Omsk","timezone selected by button");
+        settings.send("🎯 Мои нормы");
+        for(auto pick:{"goal_2000","goal_100","goal_50","goal_150","goal_2000"}) settings.click(settings.action(pick));
+        check(settings.db.rows("SELECT * FROM goals").empty(),"goals wait for confirmation");
+        settings.click(settings.action("goal_save"));
+        check(settings.db.rows("SELECT kcal,water FROM goals")[0]==Json({{"kcal",2000},{"water",2000}}),"button-only goals saved");
+        settings.send("💧 Добавить воду"); settings.click(settings.action("nav:cancel"));
+        check(settings.state().empty(),"water cancellation button");
+        settings.send("⚖️ Записать вес"); settings.send("✖️ Отмена");
+        check(settings.state().empty(),"persistent cancel button");
         // Save one synthetic preview, without user data, when requested by the developer.
         if (auto path = std::getenv("BOT_UI_PREVIEW")) {
             std::ofstream out(path);

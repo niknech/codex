@@ -44,15 +44,22 @@ Config Config::load() {
     }
     if (c.allowed.empty() && !c.public_registration)
         throw std::runtime_error("Set BOT_ALLOWED_USER_IDS or BOT_PUBLIC_REGISTRATION=true");
+    std::istringstream admins(env("BOT_ADMIN_USER_IDS"));
+    while (std::getline(admins, id, ',')) {
+        if (!std::regex_match(id, std::regex("[1-9][0-9]{0,18}")))
+            throw std::runtime_error("Invalid admin ID");
+        c.admins.insert(std::stoll(id));
+    }
     c.token = secret("BOT_TOKEN_FILE", "telegram_token");
     if (!std::regex_match(c.token, std::regex("[0-9]+:[A-Za-z0-9_-]+")))
         throw std::runtime_error("Invalid Telegram token format");
     c.ai_enabled = flag("AI_ENABLED");
+    c.ai_web_search = flag("AI_WEB_SEARCH_ENABLED");
     if (c.ai_enabled) {
         if (env("AI_PROVIDER", "openai") != "openai")
             throw std::runtime_error("Supported AI provider: openai (Responses compatible)");
         c.key = secret("AI_API_KEY_FILE", "ai_api_key");
-        c.model = env("AI_MODEL");
+        c.model = env("AI_MODEL", "gpt-6-luna");
         if (c.model.empty())
             throw std::runtime_error("AI_MODEL is required");
         c.ai_url = env("AI_RESPONSES_URL", c.ai_url);

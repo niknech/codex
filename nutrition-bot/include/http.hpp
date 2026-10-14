@@ -15,6 +15,7 @@ class CurlRuntime {
     CurlRuntime(const CurlRuntime &) = delete;
 };
 Json post(const std::string &url, const Json &body, const std::string &key = "", int timeout = 35);
+Json lookup_product(const std::string &code);
 class Telegram {
     std::string base_;
 
@@ -23,8 +24,9 @@ class Telegram {
         : base_("https://api.telegram.org/bot" + token + "/") {}
     Json call(const std::string &method, const Json &payload);
     void photo(Id chat, const std::string &path);
+    std::string photo_data(const std::string &file_id);
 };
 using AiTransport = std::function<Json(const Json &)>;
-Json ai_request(const std::string &model, const std::string &description);
+Json ai_request(const std::string &model, const std::string &description, bool web_search = false);
 Json ai_response(const Json &response);
 } // namespace nb
