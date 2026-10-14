@@ -134,8 +134,91 @@ Write-Output "База сохранена: $snapshotPath"
 
 Открой полученный файл в DB Browser for SQLite, вкладка **Browse Data / Просмотр данных**.
 В `entries` — дневник, в `users` — пользователи, в `goals` — нормы.
-Это копия: правки в ней не меняют сервер. Не загружай её обратно поверх рабочей базы — потеряются новые записи.
+Это копия: правки в ней не меняют сервер. Для возврата отредактированной копии смотри раздел 3.1:
+полная замена потеряет все серверные изменения, сделанные после выгрузки.
 Не скачивай основной файл работающей БД напрямую: свежие записи могут быть в WAL.
+
+## 3.1. Загрузить отредактированную базу обратно
+
+Это **полная замена**, не объединение баз. Если после выгрузки кто-то пользовался ботом,
+его новые записи и изменения настроек будут потеряны. Также откатятся служебные очереди
+и лимиты AI. Для одной даты в старой копии лучше исправить конкретную запись на сервере
+по разделу «Редактирование» инструкции администратора.
+
+Для планового редактирования сначала останови бота на сервере:
+
+```bash
+sudo systemctl stop nutrition-bot
+```
+
+Затем выгрузи свежую копию по разделу 3 и редактируй именно её. До загрузки обратно
+не запускай бота и не обновляй его. В DB Browser нажми **Write Changes / Записать изменения**,
+затем **Close Database / Закрыть базу**. Редактируй данные, не структуру таблиц.
+Если рядом остался непустой файл `-wal`, не отправляй один основной файл: сначала
+открой базу в DB Browser, выполни `PRAGMA wal_checkpoint(TRUNCATE);` и закрой её.
+
+**НОУТБУК — PowerShell:** укажи полный путь к исправленному файлу.
+
+```powershell
+$editedDb = Read-Host 'Полный путь к исправленной базе .sqlite3'
+if (-not (Test-Path -LiteralPath $editedDb -PathType Leaf)) { throw 'Файл не найден' }
+scp "$editedDb" nick@100.111.125.124:/home/nick/nutrition-edited.sqlite3
+if ($LASTEXITCODE -ne 0) { throw 'Не удалось загрузить базу' }
+```
+
+**СЕРВЕР — скопируй блок целиком.** Он проверит файл и версию схемы, остановит бота,
+сохранит текущую базу, восстановит исправленную и запустит службу. При ошибке
+вернёт резервную копию. Настройки из `config.env` не меняются.
+
+```bash
+sudo bash <<'SH'
+set -Eeuo pipefail
+umask 077
+exec 9>/var/lock/nutrition-bot-update.lock
+flock -n 9 || { echo 'Уже идёт другая операция обновления'; exit 1; }
+incoming=/home/nick/nutrition-edited.sqlite3
+db=/var/lib/nutrition-bot/bot.sqlite3
+test -s "$incoming"
+test -s "$db"
+test "$(sqlite3 -readonly "$incoming" 'PRAGMA integrity_check;')" = ok
+test -z "$(sqlite3 -readonly "$incoming" 'PRAGMA foreign_key_check;')"
+test "$(sqlite3 -readonly "$incoming" 'SELECT MAX(version) FROM schema_migrations;')" = \
+     "$(sqlite3 -readonly "$db" 'SELECT MAX(version) FROM schema_migrations;')"
+snapshot=$(mktemp -d /var/backups/nutrition-bot/manual-import-XXXXXXXX)
+# Согласованный локальный снимок загруженного файла.
+sqlite3 -readonly "$incoming" ".backup '$snapshot/incoming.sqlite3'"
+systemctl stop nutrition-bot
+sqlite3 "$db" ".backup '$snapshot/before.sqlite3'"
+test "$(sqlite3 -readonly "$snapshot/before.sqlite3" 'PRAGMA integrity_check;')" = ok
+rollback() {
+    trap - ERR INT TERM
+    echo "Ошибка импорта. Возвращаю базу из $snapshot/before.sqlite3"
+    systemctl stop nutrition-bot || exit 1
+    sqlite3 "$db" ".restore '$snapshot/before.sqlite3'" || exit 1
+    chown nutritionbot:nutritionbot "$db"
+    systemctl start nutrition-bot
+    exit 1
+}
+trap rollback ERR INT TERM
+sqlite3 "$db" ".restore '$snapshot/incoming.sqlite3'"
+chown nutritionbot:nutritionbot "$db"
+chmod 600 "$db"
+test "$(sqlite3 -readonly "$db" 'PRAGMA integrity_check;')" = ok
+test -z "$(sqlite3 -readonly "$db" 'PRAGMA foreign_key_check;')"
+systemctl start nutrition-bot
+sleep 5
+systemctl is-active --quiet nutrition-bot
+trap - ERR INT TERM
+echo "База заменена. Резервная копия: $snapshot/before.sqlite3"
+systemctl status nutrition-bot --no-pager
+SH
+```
+
+Если проверка или создание резервной копии остановили блок до импорта, рабочая база
+не заменена; бот может остаться остановленным. Исправь указанную ошибку или запусти
+прежнюю базу командой `sudo systemctl start nutrition-bot`.
+После успешной проверки в Telegram можно удалить временный файл:
+`rm -i /home/nick/nutrition-edited.sqlite3`. Резервную копию оставь.
 
 ## 4. Сколько пользователей и кто пользуется
 
