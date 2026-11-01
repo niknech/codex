@@ -1,0 +1,25 @@
+[Unit]
+Description=Immich with verified photo storage
+Wants=network-online.target
+After=network-online.target docker.service mnt-photos.mount
+BindsTo=docker.service mnt-photos.mount
+RequiresMountsFor=/mnt/photos
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+Type=simple
+WorkingDirectory=/home/nick/immich-app
+Environment=COMPOSE_MENU=false
+ExecStartPre=/usr/local/sbin/immich-check-storage
+ExecStartPre=/usr/bin/docker compose config --quiet
+ExecStart=/usr/bin/docker compose up --abort-on-container-exit --no-color --pull never --timeout 60
+ExecStop=/usr/bin/docker compose stop --timeout 60
+ExecStopPost=-/usr/bin/docker compose stop --timeout 60
+Restart=always
+RestartSec=15
+TimeoutStopSec=180
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
