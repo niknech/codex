@@ -124,3 +124,7 @@ HTTP HEAD к http://127.0.0.1:2283 вернул 200 OK в 11:49:04 MSK. Пока
 ## 2026-11-02 — отсутствие Serve подтверждено
 
 Повторный вывод `sudo tailscale serve status`: `No serve config`. Предложена [настройка HTTPS Serve](TAILSCALE.md) на 443 с proxy к http://127.0.0.1:2283 и флагом --bg. Выполнение, выдача URL и доступ с iPhone пока не подтверждены.
+
+## 2026-11-02 — Tailscale Serve запущен
+
+Команда `sudo tailscale serve --bg --https=443 http://127.0.0.1:2283` выполнена успешно. Выдан HTTPS URL в домене ts.net с пометкой `Available within your tailnet`, указан proxy к localhost:2283 и подтверждён фоновый запуск. Персональный адрес в GitHub не сохраняется. Это подтверждает настройку proxy, но ещё не проверку HTTPS с клиента и не вход с iPhone. Следующий шаг: включить Tailscale на iPhone, проверить адрес в Safari и использовать его как URL сервера в Immich.

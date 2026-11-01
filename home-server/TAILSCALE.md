@@ -1,6 +1,6 @@
 # Доступ к Immich через Tailscale Serve
 
-Выбран владельцем 02.11.2026. На сервере Tailscale 1.104.1; `sudo tailscale serve status` подтвердил `No serve config`. Активация и вход с телефона пока не подтверждены.
+Выбран владельцем 02.11.2026. На сервере Tailscale 1.104.1. После исходного `No serve config` владелец выполнил команду Serve: получен HTTPS URL внутри tailnet, proxy к http://127.0.0.1:2283 и сообщение `Serve started and running in the background`. Активация подтверждена; доступ через Safari и вход в Immich на iPhone ещё не проверены. Персональное DNS-имя в репозитории не публикуется.
 
 ## Следующий шаг на сервере
 
