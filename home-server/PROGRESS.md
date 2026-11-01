@@ -40,3 +40,35 @@ systemctl is-active nutrition-bot adguardvpn-bot tailscaled tailscale-relay
 ```
 
 Если указанных каталогов нет, `ls` ничего не выведет — это нормально. Проверка `fstab` может показывать другие пути; перед отправкой вывода скрыть сетевые адреса или учётные данные, если они встретятся. Не отправлять `.env`.
+
+## 2026-11-01 — результаты проверки перед подготовкой Compose
+
+Результаты предыдущего блока получены:
+
+- Запись HDD: `UUID=f8d17a00-1f7e-4ed9-86be-2a71af0587b7 /mnt/photos ext4 defaults,nofail,x-systemd.device-timeout=15s 0 2`.
+- `findmnt --verify --verbose`: Success, no errors or warnings detected.
+- `docker ps -a`: только заголовок, контейнеров нет (включая остановленные).
+- `ls` не вывел каталогов `/home/nick/immich-app` и `/opt/immich`; stderr был скрыт, поэтому окончательная проверка отсутствия будет при создании нового каталога.
+- `nutrition-bot`, `adguardvpn-bot`, `tailscaled`, `tailscale-relay`: все active после установки Docker.
+- Перезагрузка и проверка загрузки с HDD пока не выполнены.
+
+Для следующего шага выбран [Immich v3.3.5](https://github.com/immich-app/immich/releases/tag/v3.3.5), который официальный releases/latest вернул при проверке. Это выбор релиза, не подтверждение установки.
+
+### Предложенный следующий шаг — пока не подтверждён
+
+Скачать официальные шаблоны в новый закрытый каталог без запуска контейнеров. Выполнять блок целиком в Bash; при ошибке подкоманд оболочка блока завершится, текущая SSH-сессия останется открытой:
+
+```bash
+(
+set -eu
+umask 077
+mkdir -m 700 /home/nick/immich-app
+cd /home/nick/immich-app
+curl -fL --retry 3 https://github.com/immich-app/immich/releases/download/v3.3.5/docker-compose.yml -o docker-compose.yml
+curl -fL --retry 3 https://github.com/immich-app/immich/releases/download/v3.3.5/example.env -o example.env
+ls -l docker-compose.yml example.env
+cat docker-compose.yml
+)
+```
+
+Если каталог уже существует, остановиться и проверить его содержимое, не удалять и не перезаписывать. На этом шаге `.env` с рабочим паролем ещё не создаётся. После получения Compose предстоит задать пути, пароль, loopback-порт и защиту автозапуска при отсутствии HDD; `docker compose up` пока не выполнять.
