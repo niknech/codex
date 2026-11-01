@@ -84,3 +84,9 @@ cat docker-compose.yml
 Получен успешный вывод проверки: UPLOAD_LOCATION=/mnt/photos/immich, DB_DATA_LOCATION=/home/nick/immich-app/postgres, TZ=Europe/Moscow, IMMICH_VERSION=v3.3.5. Порт 127.0.0.1:2283:2283; четыре restart: "no"; `.env` — 600 nick:nick. Пароль не передавался. Контейнеры пока не запускались. Вставка команд в терминале визуально искажена, но итоговые строки проверок присутствуют.
 
 Следующий этап: [установка сервиса и первый запуск](SERVICE.md). Файлы сервиса подготовлены в репозитории; их выполнение на сервере пока не подтверждено.
+
+## 2026-11-01 — сервис установлен, запуск остановлен на проверке
+
+Скрипт и unit из коммита f0989a0 скачаны и установлены в /usr/local/sbin/immich-check-storage и /etc/systemd/system/immich.service. Проверка вывела `Immich storage check OK`. После daemon-reload команда systemd-analyze verify сообщила `Unit mnt-photos.mount not found`.
+
+Блок с set -e остановился до docker compose pull и systemctl enable --now immich. Установка приложения и автозапуск всё ещё не подтверждены. Причина, подлежащая проверке: в команде verify не включены генераторы, создающие mount-unit из fstab. Исправлена инструкция: проверить реальный mnt-photos.mount и повторить verify с --generators. Файлы сервиса менять не требуется, если повторная проверка успешна.

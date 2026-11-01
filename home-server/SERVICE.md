@@ -1,6 +1,6 @@
 # Сервис Immich с проверкой диска
 
-Статус: файлы подготовлены, установка на сервер и первый запуск ещё не подтверждены.
+Статус: файлы установлены на сервер, проверка хранилища прошла. Первая проверка unit остановилась на отсутствии сгенерированного mnt-photos.mount в окружении systemd-analyze; предложена повторная проверка с генераторами. Скачивание образов и первый запуск ещё не подтверждены.
 
 Файлы: [проверка хранилища](systemd/immich-check-storage.sh), [systemd unit](systemd/immich.service). Установка: скрипт в `/usr/local/sbin/immich-check-storage` (root:root, 755), unit в `/etc/systemd/system/immich.service` (root:root, 644). Исходники скачивать из конкретного коммита этого репозитория. Существующие файлы перед заменой проверить и сохранить.
 
@@ -24,7 +24,8 @@
 ```bash
 sudo /usr/local/sbin/immich-check-storage
 sudo systemctl daemon-reload
-sudo systemd-analyze verify /etc/systemd/system/immich.service
+sudo systemctl is-active mnt-photos.mount
+sudo systemd-analyze --generators verify /etc/systemd/system/immich.service
 cd /home/nick/immich-app
 sudo docker compose pull
 sudo systemctl enable --now immich
@@ -38,3 +39,9 @@ HTTP может быть недоступен в первые секунды и�
 Проверку отказа при неверном UUID, загрузку после reboot и восстановление после сбоя предстоит выполнить отдельно до реального импорта. Не отключать HDD физически для теста работающей базы/медиатеки.
 
 Источники: [Compose up](https://docs.docker.com/reference/cli/docker/compose/up/), [systemd dependencies](https://www.freedesktop.org/software/systemd/man/latest/systemd.unit.html).
+
+## Ошибка проверки: Unit mnt-photos.mount not found
+
+При обычном `systemd-analyze verify` генераторы не запускаются. Mount-unit из `/etc/fstab` может быть доступен работающему systemd, но отсутствовать в окружении проверки. В первоначально предложенной команде был пропущен `--generators`; исправление — включить генераторы и отдельно проверить реальный mount через `systemctl is-active mnt-photos.mount`. См. [systemd-analyze --generators](https://www.freedesktop.org/software/systemd/man/latest/systemd-analyze.html).
+
+Если mount не active или повторная проверка снова выдаёт ошибку, остановиться и получить `sudo systemctl status mnt-photos.mount --no-pager -l`. Не удалять BindsTo, не создавать второй mount-unit поверх fstab и не повторять установку файлов. После успешной проверки продолжить с `docker compose pull` и `systemctl enable --now immich`.
