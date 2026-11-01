@@ -1,6 +1,6 @@
-# Immich: следующий этап, ещё не выполнен
+# Immich: установка и дальнейшие задачи
 
-Все действия этого документа — план. Сейчас Immich, PostgreSQL, аккаунт администратора и резервное копирование **не настроены**.
+Обновление 01.11.2026: Immich v3.3.5 и PostgreSQL запущены, все четыре контейнера healthy. Фактически выполненные настройки см. в [CONFIGURE.md](CONFIGURE.md), управление через systemd — в [SERVICE.md](SERVICE.md), результаты — в [журнале](PROGRESS.md). Ниже сохранён общий план; не повторять создание конфигурации и прямой запуск Compose. Аккаунт администратора и резервное копирование ещё не подтверждены.
 
 ## 1. Проверить ресурсы и выбрать релиз
 
@@ -66,7 +66,7 @@ ports:
 
 Не добавлять это второй строкой к существующей публикации на всех интерфейсах. Не публиковать PostgreSQL/Redis наружу. См. [риски Docker/UFW](SETUP.md#docker-и-ufw).
 
-## 4. Первый пробный запуск
+## 4. Первый пробный запуск (выполнен через systemd)
 
 После выполнения предыдущих условий:
 
@@ -74,7 +74,7 @@ ports:
 cd ~/immich-app
 sudo docker compose config --quiet
 sudo docker compose pull
-sudo docker compose up -d
+sudo systemctl start immich
 sudo docker compose ps
 sudo docker compose logs --tail=100
 curl -I http://127.0.0.1:2283

@@ -90,3 +90,9 @@ cat docker-compose.yml
 Скрипт и unit из коммита f0989a0 скачаны и установлены в /usr/local/sbin/immich-check-storage и /etc/systemd/system/immich.service. Проверка вывела `Immich storage check OK`. После daemon-reload команда systemd-analyze verify сообщила `Unit mnt-photos.mount not found`.
 
 Блок с set -e остановился до docker compose pull и systemctl enable --now immich. Установка приложения и автозапуск всё ещё не подтверждены. Причина, подлежащая проверке: в команде verify не включены генераторы, создающие mount-unit из fstab. Исправлена инструкция: проверить реальный mnt-photos.mount и повторить verify с --generators. Файлы сервиса менять не требуется, если повторная проверка успешна.
+
+## 2026-11-01 11:49 MSK — первый успешный запуск
+
+По выводу пользователя immich.service включён (enabled) и active (running) с 11:48:30 MSK. Проверка хранилища и `docker compose config --quiet` завершились с кодом 0. Все четыре контейнера healthy: immich_server v3.3.5, immich_machine_learning v3.3.5, PostgreSQL 14 с vectorchord0.4.3/pgvectors0.2.0 и Valkey 9. Опубликован только 127.0.0.1:2283; у БД и Valkey показаны внутренние 5432/tcp и 6379/tcp без публикации на хост.
+
+HTTP HEAD к http://127.0.0.1:2283 вернул 200 OK в 11:49:04 MSK. Показанные systemctl 28,5 MiB относятся к сервису Compose, не к суммарному потреблению контейнеров. Перезагрузка, регистрация администратора, импорт и резервное копирование не подтверждены. Следующий шаг — [первый вход через SSH-туннель](FIRST-LOGIN.md).
